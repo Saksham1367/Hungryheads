@@ -1,0 +1,40 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- HungryHeads — local dev seed
+--
+-- Run AFTER 0001_init.sql and AFTER you've manually created two test users
+-- via Supabase Auth (e.g. alice@hh.test and bob@hh.test). The trigger
+-- on_auth_user_created will have inserted matching profiles rows.
+--
+-- Then update the two `<paste-uuid-here>` placeholders below with real auth
+-- user IDs and run:
+--
+--   supabase db execute --file supabase/seed.sql
+--
+-- This file is non-destructive on conflicts so it's safe to re-run.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Example user 1 — Alice. Peanut allergy, vegetarian, ₹5k budget, spice hunter.
+-- insert into public.user_preferences (user_id, cuisines, diet, monthly_budget, delivery_radius_km, personality)
+-- values (
+--   '<paste-alice-uuid>',
+--   array['North Indian', 'Italian', 'Healthy Bowls'],
+--   'Vegetarian',
+--   5000, 5, 'spice-hunter'
+-- ) on conflict (user_id) do nothing;
+--
+-- insert into public.user_allergies (user_id, allergen, severity)
+-- values
+--   ('<paste-alice-uuid>', 'Peanuts', 'high'),
+--   ('<paste-alice-uuid>', 'Tree Nuts', 'medium')
+-- on conflict (user_id, allergen) do nothing;
+
+-- Example user 2 — Bob. No allergies, non-veg, ₹10k, comfort crew.
+-- insert into public.user_preferences (user_id, cuisines, diet, monthly_budget, delivery_radius_km, personality)
+-- values (
+--   '<paste-bob-uuid>',
+--   array['Biryani', 'Burgers', 'Pizza'],
+--   'Non-Vegetarian',
+--   10000, 10, 'comfort-crew'
+-- ) on conflict (user_id) do nothing;
+
+-- (FoodHuddle, orders_cache, etc. seed in once we have real Swiggy fixture IDs.)

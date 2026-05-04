@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HungryHeads
 
-## Getting Started
+> AI-powered food companion built on Swiggy's Builders Club MCP platform.
+> **Decide. Order. Eat. Together — without the headache.**
 
-First, run the development server:
+Four features sharing one user profile and one AI agent core:
+
+| Feature | What it does |
+|---|---|
+| **SafePlate** | Allergy & diet safety net — filters menus, blocks risky items at checkout |
+| **SpendSmart** | Monthly budget guardrail with live impact + insights |
+| **VoiceOrder** | Speak-to-order via WhatsApp + smart-reorder cadence learning |
+| **FoodHuddle** | Real-time group decision engine with spin-the-wheel |
+
+The full product brief lives at [`../HungryHeads-Project-Brief.md`](../HungryHeads-Project-Brief.md). Read it before contributing.
+
+---
+
+## Stack
+
+Next.js 14 (App Router) · TypeScript · Tailwind CSS · shadcn/ui · Supabase (Postgres + Auth + Realtime) · Anthropic SDK + MCP TypeScript SDK · React Hook Form + Zod · Zustand · pnpm.
+
+## Getting started
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local   # then fill in real values
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See `.env.example`. Critical knob:
 
-## Learn More
+- `MCP_MODE=mock` — replays fixture JSON instead of hitting Swiggy MCP. Use this until OAuth credentials are issued post-Builders-Club approval.
+- `MCP_MODE=live` — real Swiggy MCP calls.
 
-To learn more about Next.js, take a look at the following resources:
+## Project structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+app/                Next.js App Router pages + API routes
+components/         UI components (marketing, onboarding, feature-specific)
+lib/                Domain logic (Supabase, Swiggy MCP, agent, huddle, utils)
+types/              Shared TypeScript types (database, swiggy, domain)
+fixtures/mcp/       Mock Swiggy MCP responses for local-first dev
+supabase/           SQL migrations + seed data
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Full breakdown in brief §10.
 
-## Deploy on Vercel
+## Build phases
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Phase 1** — MVP for Builders Club submission (homepage → onboarding → dashboard → FoodHuddle → SafePlate → demo video)
+- **Phase 2** — Live MCP integration, SpendSmart, smart reorders, UPI splits
+- **Phase 3** — Voice via WhatsApp + Whisper, multilingual, learned personalization
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Powered by
+
+Powered by Swiggy · Powered by Claude

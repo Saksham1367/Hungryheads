@@ -2,22 +2,82 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* HungryHeads light theme — shadcn tokens mapped to brand palette (§4.1) */
+    --background: 28 100% 98%;          /* #FFF8F3 cream */
+    --foreground: 0 0% 10%;             /* #1A1A1A black */
+
+    --card: 0 0% 100%;                  /* white */
+    --card-foreground: 0 0% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 10%;
+
+    --primary: 16 100% 60%;             /* #FF6B35 hh-orange */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 0 0% 10%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;     /* #6B7280 */
+
+    --accent: 22 100% 92%;              /* #FFE4D6 hh-orange-light */
+    --accent-foreground: 0 0% 10%;
+
+    --destructive: 0 84% 60%;           /* #EF4444 */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;              /* #E5E7EB hh-gray-light */
+    --input: 220 13% 91%;
+    --ring: 16 100% 60%;                /* match primary */
+
+    --radius: 0.75rem;                  /* rounded-xl default per §4.3 */
+  }
+
+  .dark {
+    --background: 0 0% 10%;
+    --foreground: 0 0% 98%;
+
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 98%;
+
+    --primary: 16 100% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 98%;
+
+    --muted: 0 0% 16%;
+    --muted-foreground: 220 9% 64%;
+
+    --accent: 0 0% 16%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 16 100% 60%;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+  /* Tabular numerals for prices, budgets, counters — §4.2 */
+  .tabular {
+    font-feature-settings: "tnum";
+  }
 }
 
 @layer utilities {
