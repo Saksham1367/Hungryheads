@@ -16,8 +16,6 @@ const PROTECTED_PREFIXES = [
   "/dashboard",
   "/onboarding",
   "/connect-swiggy",
-  "/safeplate",
-  "/spendsmart",
   "/voiceorder",
   "/huddle",
   "/profile",

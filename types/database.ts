@@ -1,14 +1,14 @@
 /**
  * HungryHeads — Supabase Postgres types.
  *
- * Hand-rolled from `supabase/migrations/0001_init.sql` to match the brief §8
- * schema exactly. Once the Supabase CLI is connected to a real project we'll
- * regenerate this with:
+ * Hand-rolled to match `supabase/migrations/0001_init.sql` and
+ * `0002_chat_and_persistent_huddles.sql`. Once Supabase CLI is connected to
+ * your project we can regenerate via:
  *
  *   pnpm supabase gen types typescript --project-id <id> > types/database.ts
  *
- * Until then, this file is the source of truth for Supabase row shapes and
- * stays in lockstep with the migration file by hand.
+ * Until then, treat the SQL migrations and this file as a pair — edit both
+ * together.
  */
 
 export type Json =
@@ -212,10 +212,143 @@ export type Database = {
         ];
       };
 
+      // ────────────────────────────────────────────────────────────────────
+      // CHAT (added in 0002)
+      // ────────────────────────────────────────────────────────────────────
+      chats: {
+        Row: {
+          id: string;
+          user_id: string;
+          title: string;
+          mode: string; // 'hungry' | 'diet' | 'budget'
+          last_message_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          title?: string;
+          mode?: string;
+          last_message_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          title?: string;
+          mode?: string;
+          last_message_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "chats_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      chat_messages: {
+        Row: {
+          id: string;
+          chat_id: string;
+          role: string; // 'user' | 'agent' | 'system'
+          content: string;
+          mode_at_send: string;
+          payload: Json | null;
+          tool_calls: Json | null;
+          learned_fact: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chat_id: string;
+          role: string;
+          content?: string;
+          mode_at_send?: string;
+          payload?: Json | null;
+          tool_calls?: Json | null;
+          learned_fact?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          chat_id?: string;
+          role?: string;
+          content?: string;
+          mode_at_send?: string;
+          payload?: Json | null;
+          tool_calls?: Json | null;
+          learned_fact?: string | null;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_chat_id_fkey";
+            columns: ["chat_id"];
+            referencedRelation: "chats";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      agent_memory: {
+        Row: {
+          id: string;
+          user_id: string;
+          fact: string;
+          source_chat_id: string | null;
+          confidence: number;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          fact: string;
+          source_chat_id?: string | null;
+          confidence?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          fact?: string;
+          source_chat_id?: string | null;
+          confidence?: number;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agent_memory_user_id_fkey";
+            columns: ["user_id"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agent_memory_source_chat_id_fkey";
+            columns: ["source_chat_id"];
+            referencedRelation: "chats";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      // ────────────────────────────────────────────────────────────────────
+      // HUDDLES — persistent groups, modified in 0002
+      // ────────────────────────────────────────────────────────────────────
       huddles: {
         Row: {
           id: string;
           code: string;
+          name: string | null;
           admin_id: string;
           status: string;
           mode: string | null;
@@ -225,6 +358,7 @@ export type Database = {
         Insert: {
           id?: string;
           code: string;
+          name?: string | null;
           admin_id: string;
           status?: string;
           mode?: string | null;
@@ -234,6 +368,7 @@ export type Database = {
         Update: {
           id?: string;
           code?: string;
+          name?: string | null;
           admin_id?: string;
           status?: string;
           mode?: string | null;
@@ -282,10 +417,57 @@ export type Database = {
         ];
       };
 
-      huddle_responses: {
+      huddle_sessions: {
         Row: {
           id: string;
           huddle_id: string;
+          triggered_by: string;
+          status: string; // 'polling' | 'decided' | 'ordered' | 'cancelled'
+          mode: string | null; // 'order_in' | 'dine_out'
+          winner_recommendation_id: string | null;
+          created_at: string;
+          closed_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          huddle_id: string;
+          triggered_by: string;
+          status?: string;
+          mode?: string | null;
+          winner_recommendation_id?: string | null;
+          created_at?: string;
+          closed_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          huddle_id?: string;
+          triggered_by?: string;
+          status?: string;
+          mode?: string | null;
+          winner_recommendation_id?: string | null;
+          created_at?: string;
+          closed_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "huddle_sessions_huddle_id_fkey";
+            columns: ["huddle_id"];
+            referencedRelation: "huddles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "huddle_sessions_triggered_by_fkey";
+            columns: ["triggered_by"];
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
+      huddle_responses: {
+        Row: {
+          id: string;
+          huddle_session_id: string;
           user_id: string;
           cuisines: string[] | null;
           mood: string | null;
@@ -296,7 +478,7 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          huddle_id: string;
+          huddle_session_id: string;
           user_id: string;
           cuisines?: string[] | null;
           mood?: string | null;
@@ -307,7 +489,7 @@ export type Database = {
         };
         Update: {
           id?: string;
-          huddle_id?: string;
+          huddle_session_id?: string;
           user_id?: string;
           cuisines?: string[] | null;
           mood?: string | null;
@@ -318,9 +500,9 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "huddle_responses_huddle_id_fkey";
-            columns: ["huddle_id"];
-            referencedRelation: "huddles";
+            foreignKeyName: "huddle_responses_huddle_session_id_fkey";
+            columns: ["huddle_session_id"];
+            referencedRelation: "huddle_sessions";
             referencedColumns: ["id"];
           },
           {
@@ -335,7 +517,7 @@ export type Database = {
       huddle_recommendations: {
         Row: {
           id: string;
-          huddle_id: string;
+          huddle_session_id: string;
           rank: number;
           swiggy_id: string;
           name: string;
@@ -348,7 +530,7 @@ export type Database = {
         };
         Insert: {
           id?: string;
-          huddle_id: string;
+          huddle_session_id: string;
           rank: number;
           swiggy_id: string;
           name: string;
@@ -361,7 +543,7 @@ export type Database = {
         };
         Update: {
           id?: string;
-          huddle_id?: string;
+          huddle_session_id?: string;
           rank?: number;
           swiggy_id?: string;
           name?: string;
@@ -374,44 +556,59 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: "huddle_recommendations_huddle_id_fkey";
-            columns: ["huddle_id"];
-            referencedRelation: "huddles";
+            foreignKeyName: "huddle_recommendations_huddle_session_id_fkey";
+            columns: ["huddle_session_id"];
+            referencedRelation: "huddle_sessions";
             referencedColumns: ["id"];
           },
         ];
       };
 
-      agent_conversations: {
+      huddle_orders: {
         Row: {
           id: string;
-          user_id: string;
-          messages: Json;
-          context: string | null;
-          created_at: string;
-          updated_at: string;
+          huddle_id: string;
+          session_id: string | null;
+          placed_by: string;
+          swiggy_order_id: string | null;
+          restaurant_name: string | null;
+          total_amount: number;
+          items: Json;
+          ordered_at: string;
         };
         Insert: {
           id?: string;
-          user_id: string;
-          messages: Json;
-          context?: string | null;
-          created_at?: string;
-          updated_at?: string;
+          huddle_id: string;
+          session_id?: string | null;
+          placed_by: string;
+          swiggy_order_id?: string | null;
+          restaurant_name?: string | null;
+          total_amount: number;
+          items: Json;
+          ordered_at?: string;
         };
         Update: {
           id?: string;
-          user_id?: string;
-          messages?: Json;
-          context?: string | null;
-          created_at?: string;
-          updated_at?: string;
+          huddle_id?: string;
+          session_id?: string | null;
+          placed_by?: string;
+          swiggy_order_id?: string | null;
+          restaurant_name?: string | null;
+          total_amount?: number;
+          items?: Json;
+          ordered_at?: string;
         };
         Relationships: [
           {
-            foreignKeyName: "agent_conversations_user_id_fkey";
-            columns: ["user_id"];
-            referencedRelation: "profiles";
+            foreignKeyName: "huddle_orders_huddle_id_fkey";
+            columns: ["huddle_id"];
+            referencedRelation: "huddles";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "huddle_orders_session_id_fkey";
+            columns: ["session_id"];
+            referencedRelation: "huddle_sessions";
             referencedColumns: ["id"];
           },
         ];
