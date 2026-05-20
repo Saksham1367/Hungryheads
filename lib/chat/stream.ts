@@ -40,7 +40,10 @@ export async function* streamChat(
     let msg = `http_${res.status}`;
     try {
       const j = await res.json();
-      if (typeof j?.error === "string") msg = j.error;
+      // Prefer the human-friendly `message` (e.g. rate-limit copy); fall back
+      // to the machine `error` code, then to `http_<status>`.
+      if (typeof j?.message === "string") msg = j.message;
+      else if (typeof j?.error === "string") msg = j.error;
     } catch {
       /* ignore */
     }

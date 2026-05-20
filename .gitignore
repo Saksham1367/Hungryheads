@@ -45,3 +45,7 @@ Thumbs.db
 # supabase local cli output
 /supabase/.branches
 /supabase/.temp
+.lighthouse/
+
+# internal-only docs — strategy / submission notes, never publish
+SUBMISSION.md

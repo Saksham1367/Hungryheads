@@ -297,6 +297,44 @@ export type Database = {
         ];
       };
 
+      chat_shares: {
+        Row: {
+          id: string;
+          chat_id: string;
+          shared_by: string;
+          token: string;
+          title: string;
+          snapshot: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          chat_id: string;
+          shared_by: string;
+          token: string;
+          title: string;
+          snapshot: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          chat_id?: string;
+          shared_by?: string;
+          token?: string;
+          title?: string;
+          snapshot?: Json;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "chat_shares_chat_id_fkey";
+            columns: ["chat_id"];
+            referencedRelation: "chats";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+
       agent_memory: {
         Row: {
           id: string;

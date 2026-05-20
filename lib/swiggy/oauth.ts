@@ -49,13 +49,20 @@ export function generateState(): string {
   return base64url(bytes);
 }
 
-/** Endpoint URLs — env-overridable for staging vs production Swiggy MCP. */
+/**
+ * Endpoint URLs — env-overridable for staging vs production Swiggy MCP.
+ * Paths match Builders Club docs §4 (Endpoints table): `/auth/authorize`,
+ * `/auth/token`, `/auth/logout`. NOT `/oauth/*` — different routes entirely.
+ */
 export const SWIGGY_AUTHORIZE_URL =
   process.env.SWIGGY_OAUTH_AUTHORIZE_URL ??
-  "https://mcp.swiggy.com/oauth/authorize";
+  "https://mcp.swiggy.com/auth/authorize";
 
 export const SWIGGY_TOKEN_URL =
-  process.env.SWIGGY_OAUTH_TOKEN_URL ?? "https://mcp.swiggy.com/oauth/token";
+  process.env.SWIGGY_OAUTH_TOKEN_URL ?? "https://mcp.swiggy.com/auth/token";
+
+export const SWIGGY_LOGOUT_URL =
+  process.env.SWIGGY_OAUTH_LOGOUT_URL ?? "https://mcp.swiggy.com/auth/logout";
 
 /** Default scope set per Builders Club v1. */
 export const SWIGGY_SCOPES = ["mcp:tools", "mcp:resources", "mcp:prompts"];

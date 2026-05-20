@@ -26,9 +26,7 @@ export function WinnerCard({
     setError(null);
     setPending(true);
     try {
-      console.log("[PlaceHuddleOrder] sessionId=", sessionId);
       const result = await placeHuddleOrderFromWinner(sessionId);
-      console.log("[PlaceHuddleOrder] result:", result);
       if (!result.ok) {
         setError(result.error);
         setPending(false);

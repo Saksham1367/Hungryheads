@@ -20,16 +20,26 @@ import { isChatMode } from "@/lib/chat/modes";
 import { deriveChatTitle } from "@/lib/chat/util";
 import { anthropicClient, DEFAULT_MAX_TOKENS, DEFAULT_MODEL } from "@/lib/agent/anthropic";
 import { loadAgentUserProfile } from "@/lib/agent/profile";
-import { loadTopMemories } from "@/lib/agent/memory";
+import { loadTopMemories, pruneAgentMemory } from "@/lib/agent/memory";
 import { buildChatSystemPrompt } from "@/lib/agent/system-prompts";
 import { extractOrderCard } from "@/lib/agent/order-card";
 import { extractLearnedFacts } from "@/lib/agent/learned";
 import { AGENT_TOOLS, runTool } from "@/lib/agent/tools";
+import { checkRateLimit } from "@/lib/ratelimit";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Json } from "@/types/database";
 import type { ChatMessagePayload, ChatMode } from "@/types/domain";
 
 const MAX_TOOL_TURNS = 4;
+
+/**
+ * Rate-limit budget per authenticated user.
+ *   - 30 requests / 60s sliding window.
+ * Streaming responses are slow, so 30/min is generous for any human pattern
+ * but throttles a runaway loop (which can burn dozens of $/min on Opus).
+ */
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000;
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +71,31 @@ export async function POST(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return errorResponse("unauthorized", 401);
+
+  // ─── Rate limit (per authenticated user) ────────────────────────────────
+  const rl = checkRateLimit(
+    `chat:${user.id}`,
+    RATE_LIMIT_MAX,
+    RATE_LIMIT_WINDOW_MS,
+  );
+  if (!rl.ok) {
+    return new Response(
+      JSON.stringify({
+        error: "rate_limited",
+        message: `Slow down — try again in ${rl.retryAfterSeconds}s.`,
+        retryAfterSeconds: rl.retryAfterSeconds,
+      }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(rl.retryAfterSeconds),
+          "X-RateLimit-Limit": String(RATE_LIMIT_MAX),
+          "X-RateLimit-Remaining": "0",
+        },
+      },
+    );
+  }
 
   // ─── Resolve / create chat ──────────────────────────────────────────────
   let chatId = body.chatId;
@@ -199,7 +234,7 @@ export async function POST(request: NextRequest) {
           const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
           for (const tu of toolUseBlocks) {
             send({ type: "tool_start", name: tu.name });
-            const result = runTool(tu.name, tu.input);
+            const result = runTool(tu.name, tu.input, { userId: user.id });
             send({
               type: "tool_end",
               name: tu.name,
@@ -217,6 +252,16 @@ export async function POST(request: NextRequest) {
 
           // Feed tool results in as the next user message.
           turnMessages.push({ role: "user", content: toolResults });
+
+          // Visual separator before Claude resumes streaming text in the
+          // next turn. Without this, "Now let me search!" from turn N runs
+          // straight into "Found 3 spots…" from turn N+1 — looks like one
+          // run-on sentence with no paragraph break around tool calls.
+          if (toolUseBlocks.length > 0) {
+            const sep = "\n\n";
+            assembled += sep;
+            send({ type: "delta", text: sep });
+          }
 
           // Loop continues — next iteration streams the agent's follow-up.
         }
@@ -272,6 +317,8 @@ export async function POST(request: NextRequest) {
           confidence: 0.85,
         }));
         await supabase.from("agent_memory").insert(rows);
+        // Cap retained rows per user (fire-and-forget — don't block the stream).
+        void pruneAgentMemory(user.id);
       }
 
       // Touch chat metadata

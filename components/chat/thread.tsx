@@ -1,7 +1,15 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Loader2, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronUp,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils/cn";
 import { formatRupees } from "@/lib/utils/format";
 import type { ChatMessageView } from "@/lib/chat/types";
@@ -13,10 +21,37 @@ import { placeOrderFromMessage } from "@/app/(app)/dashboard/order-actions";
  * we honour for now (matches the prototype's rich text). Step 6d will replace
  * with a proper renderer (react-markdown w/ a tiny plugin set).
  */
-export function ChatThread({ messages }: { messages: ChatMessageView[] }) {
+export function ChatThread({
+  messages,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
+}: {
+  messages: ChatMessageView[];
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
+}) {
   return (
     <div className="flex-1 overflow-y-auto py-8">
       <div className="max-w-[780px] mx-auto px-7 flex flex-col gap-7">
+        {hasMore && onLoadMore && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={onLoadMore}
+              disabled={loadingMore}
+              className="inline-flex items-center gap-1.5 rounded-full border border-hh-gray-light bg-white px-3 py-1.5 text-xs font-medium text-hh-charcoal hover:bg-hh-orange-light hover:border-hh-orange-light hover:text-hh-orange-dark disabled:opacity-60 transition-colors"
+            >
+              {loadingMore ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ChevronUp className="h-3 w-3" />
+              )}
+              {loadingMore ? "Loading…" : "Load earlier messages"}
+            </button>
+          </div>
+        )}
         {messages.map((m) => (
           <Turn key={m.id} message={m} />
         ))}
@@ -41,7 +76,19 @@ function Turn({ message }: { message: ChatMessageView }) {
         H
       </span>
       <div className="flex-1 min-w-0">
-        {message.text && <RichText text={message.text} />}
+        {(() => {
+          // Sanitise streaming text: hide the in-progress <order-summary>
+          // JSON and the trailing `LEARNED:` line — both are server-handled
+          // markers, not user-facing prose. The `done` event later replaces
+          // `message.text` with the fully-cleaned version from the server.
+          const prep = prepareAgentText(message.text);
+          return (
+            <>
+              {prep.visible && <RichText text={prep.visible} />}
+              {prep.buildingOrder && !message.order && <OrderBuildingPill />}
+            </>
+          );
+        })()}
         {message.tool && <ToolIndicator name={message.tool} />}
         {message.learned && (
           <span className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-b from-hh-orange-light to-white border border-hh-orange-light text-[11px] font-semibold text-hh-orange-dark">
@@ -60,16 +107,171 @@ function Turn({ message }: { message: ChatMessageView }) {
   );
 }
 
-/** Tiny **bold** + paragraph splitter. */
-function RichText({ text }: { text: string }) {
-  const paragraphs = text.split(/\n\n+/);
+/**
+ * Splits a streaming agent reply into a user-facing prose half and a flag
+ * indicating that an order card is currently being assembled (the model is
+ * mid-`<order-summary>`-JSON). Also drops any visible `LEARNED:` line so the
+ * pill is the only surface for that signal.
+ */
+function prepareAgentText(text: string): {
+  visible: string;
+  buildingOrder: boolean;
+} {
+  if (!text) return { visible: "", buildingOrder: false };
+
+  let visible = text;
+  let buildingOrder = false;
+
+  // Order-summary marker. While the closing tag hasn't streamed yet, hide
+  // everything from the opening tag onwards and show the "building order"
+  // pill. Once both tags are present, hide the whole block — the parsed
+  // <OrderSummaryCard> renders below.
+  const openIdx = visible.indexOf("<order-summary>");
+  if (openIdx >= 0) {
+    const closeIdx = visible.indexOf("</order-summary>", openIdx);
+    if (closeIdx >= 0) {
+      visible =
+        visible.slice(0, openIdx) +
+        visible.slice(closeIdx + "</order-summary>".length);
+    } else {
+      visible = visible.slice(0, openIdx);
+      buildingOrder = true;
+    }
+  }
+
+  // Strip every `LEARNED: <fact>` line (rendered as its own pill).
+  visible = visible.replace(/^[ \t]*LEARNED:[ \t]*.+$/gim, "").trimEnd();
+  // Collapse blank-line debris left behind by the strips.
+  visible = visible.replace(/\n{3,}/g, "\n\n");
+
+  return { visible, buildingOrder };
+}
+
+function OrderBuildingPill() {
   return (
-    <div className="space-y-2.5 text-[14.5px] leading-[1.65] text-hh-charcoal">
-      {paragraphs.map((p, i) => (
-        <p key={i} className="m-0">
-          {parseBold(p)}
-        </p>
-      ))}
+    <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-hh-orange-light/60 border border-hh-orange-light px-3 py-1.5 text-[11px] font-semibold text-hh-orange-dark">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      Building your order card…
+    </div>
+  );
+}
+
+/**
+ * Markdown renderer for agent messages. Supports bold, italic, lists,
+ * inline code, code blocks, links, and GitHub-flavored extras (tables,
+ * task lists). Each element is styled with the brand palette so the prose
+ * feels native to the app, not "library output."
+ */
+function RichText({ text }: { text: string }) {
+  return (
+    <div className="text-[15px] leading-[1.65] text-hh-charcoal space-y-3">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="m-0">{children}</p>,
+          h1: ({ children }) => (
+            <h1 className="font-display text-xl font-extrabold text-hh-black mt-1 mb-1">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="font-display text-lg font-bold text-hh-black mt-1 mb-1">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="font-display text-base font-bold text-hh-black mt-1 mb-0.5">
+              {children}
+            </h3>
+          ),
+          h4: ({ children }) => (
+            <h4 className="font-display text-[15px] font-bold text-hh-black mt-1">
+              {children}
+            </h4>
+          ),
+          strong: ({ children }) => (
+            <strong className="text-hh-black font-semibold">{children}</strong>
+          ),
+          em: ({ children }) => <em className="italic">{children}</em>,
+          ul: ({ children }) => (
+            <ul className="my-0.5 ml-5 list-disc marker:text-hh-orange-dark space-y-1">
+              {children}
+            </ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="my-0.5 ml-5 list-decimal marker:text-hh-orange-dark marker:font-semibold space-y-1">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-hh-orange-dark underline underline-offset-2 hover:no-underline"
+            >
+              {children}
+            </a>
+          ),
+          code: ({ className, children, ...props }) => {
+            const isInline = !className?.includes("language-");
+            if (isInline) {
+              return (
+                <code
+                  className="px-1.5 py-0.5 rounded bg-hh-orange-light/50 text-hh-orange-dark font-mono text-[0.85em]"
+                  {...props}
+                >
+                  {children}
+                </code>
+              );
+            }
+            return (
+              <code
+                className="block p-3 rounded-xl bg-hh-cream border border-hh-gray-light font-mono text-[0.85em] overflow-x-auto"
+                {...props}
+              >
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => (
+            <pre className="my-2 rounded-xl bg-hh-cream border border-hh-gray-light overflow-x-auto">
+              {children}
+            </pre>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-[3px] border-hh-orange pl-3 italic text-hh-charcoal/85 my-1.5">
+              {children}
+            </blockquote>
+          ),
+          hr: () => <hr className="my-3 border-hh-gray-light" />,
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto rounded-xl border border-hh-gray-light">
+              <table className="w-full text-[13.5px] border-collapse">
+                {children}
+              </table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-hh-cream text-hh-black font-display">
+              {children}
+            </thead>
+          ),
+          th: ({ children }) => (
+            <th className="text-left px-3 py-2 font-semibold border-b border-hh-gray-light">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-3 py-2 border-b border-hh-gray-light last:border-b-0 align-top">
+              {children}
+            </td>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -111,18 +313,6 @@ function toolLabel(name: string): string {
   }
 }
 
-function parseBold(text: string): React.ReactNode[] {
-  const parts = text.split(/\*\*(.+?)\*\*/g);
-  return parts.map((p, i) =>
-    i % 2 === 1 ? (
-      <strong key={i} className="text-hh-black font-semibold">
-        {p}
-      </strong>
-    ) : (
-      <span key={i}>{p}</span>
-    ),
-  );
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Order summary card (the YES-to-place card from the prototype)
@@ -140,7 +330,9 @@ function OrderSummaryCard({
 
   const placed = order.status === "placed";
   const cancelled = order.status === "cancelled";
-  const canAct = !placed && !cancelled && !isPending;
+  const flaggedCount = order.items.filter((it) => !it.safe).length;
+  const hasFlagged = flaggedCount > 0;
+  const canAct = !placed && !cancelled && !isPending && !hasFlagged;
 
   const onPlace = () => {
     setError(null);
@@ -199,14 +391,19 @@ function OrderSummaryCard({
             className={cn(
               "flex justify-between items-baseline py-2 text-[13px]",
               i < order.items.length - 1 && "border-b border-dashed border-hh-gray-light",
+              !it.safe && "bg-red-50/40 -mx-4 px-4",
             )}
           >
-            <span className="text-hh-charcoal flex items-baseline gap-1.5">
+            <span className="text-hh-charcoal flex items-baseline gap-1.5 flex-wrap">
               {it.name}
               <span className="font-mono text-[11px] text-hh-gray">× {it.qty}</span>
-              {it.safe && (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-hh-success">
+              {it.safe ? (
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-success bg-emerald-50 px-1.5 py-0.5 rounded">
                   <Check className="h-3 w-3" /> safe
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-danger bg-red-100 px-1.5 py-0.5 rounded">
+                  <AlertTriangle className="h-3 w-3" /> flagged
                 </span>
               )}
             </span>
@@ -255,6 +452,18 @@ function OrderSummaryCard({
         </div>
       ) : (
         <>
+          {hasFlagged && (
+            <div className="mx-4 my-2 px-3 py-2 rounded-xl border border-hh-danger/40 bg-red-50 text-xs text-hh-danger flex items-start gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              <span>
+                <strong>SafePlate blocked the order.</strong>{" "}
+                {flaggedCount} item
+                {flaggedCount === 1 ? "" : "s"} contain
+                {flaggedCount === 1 ? "s" : ""} an allergen on your profile.
+                Ask the agent to swap before placing.
+              </span>
+            </div>
+          )}
           {error && (
             <div className="px-4 pt-3 pb-1 text-xs text-hh-danger">
               {error}

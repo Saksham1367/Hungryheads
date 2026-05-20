@@ -6,8 +6,8 @@ const FOOTER_LINKS = {
   product: [
     { label: "SafePlate", href: "#safeplate" },
     { label: "SpendSmart", href: "#spendsmart" },
-    { label: "VoiceOrder", href: "#voiceorder" },
     { label: "FoodHuddle", href: "#foodhuddle" },
+    { label: "What's next", href: "#whats-next" },
   ],
   company: [
     { label: "How it works", href: "#how-it-works" },
@@ -29,7 +29,14 @@ export function MarketingFooter() {
           <div className="space-y-4 md:col-span-1">
             <Logo className="text-white [&>span:last-child]:text-white" />
             <p className="text-sm text-white/70 max-w-xs">
-              {BRAND.tagline} Built on Swiggy. Powered by Claude.
+              {BRAND.tagline} Built on Swiggy Builders Club. Powered by Claude.
+            </p>
+            <p className="text-xs text-white/50">
+              Restaurant, menu, and order data{" "}
+              <span className="text-[#FF5200] font-semibold">
+                Powered by Swiggy
+              </span>
+              .
             </p>
           </div>
 

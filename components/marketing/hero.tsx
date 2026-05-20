@@ -29,31 +29,36 @@ export function Hero() {
           </h1>
 
           <p className="text-lg md:text-xl text-hh-charcoal max-w-lg">
-            Your AI food companion. Solve allergies, budgets, group debates and
-            reorders — all from one shared profile, one Claude-powered agent.
+            One AI agent that settles the group debate, watches your budget,
+            and never lets an allergen slip through. Built on Swiggy, powered
+            by Claude.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <Link href="/auth/sign-up">
-              <Button variant="primary" size="lg" className="w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row gap-4 pt-2">
+            <Link
+              href="/auth/sign-up"
+              className="inline-flex w-full sm:w-auto"
+            >
+              <Button variant="primary" size="lg" className="w-full">
                 Get started — free
                 <ArrowRight className="h-4 w-4" />
               </Button>
             </Link>
-            <Link href="#features">
-              <Button
-                variant="secondary"
-                size="lg"
-                className="w-full sm:w-auto"
-              >
+            <Link
+              href="#how-it-works"
+              className="inline-flex w-full sm:w-auto"
+            >
+              <Button variant="secondary" size="lg" className="w-full">
                 <PlayCircle className="h-4 w-4" />
-                Watch demo
+                See how it works
               </Button>
             </Link>
           </div>
 
           <div className="flex items-center gap-6 pt-4 text-xs text-hh-gray">
-            <span>No credit card needed</span>
+            <span>Free to start</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="hidden sm:inline">No credit card needed</span>
             <span className="hidden sm:inline">•</span>
             <span className="hidden sm:inline">Your data stays in India</span>
           </div>

@@ -52,9 +52,51 @@ export async function loadChat(chatId: string): Promise<ChatView | null> {
   };
 }
 
+/** Page size for chat history. Tuned to keep the initial render snappy. */
+export const CHAT_PAGE_SIZE = 50;
+
+/**
+ * Load the most-recent `limit` messages for a chat in chronological (asc) order.
+ * Pulls newest-first then reverses, so very old turns are off-screen until the
+ * user pages back via {@link loadEarlierChatMessages}.
+ */
 export async function loadChatMessages(
   chatId: string,
-): Promise<ChatMessageView[]> {
+  limit: number = CHAT_PAGE_SIZE,
+): Promise<{ messages: ChatMessageView[]; hasMore: boolean }> {
+  const supabase = createClient();
+  // +1 sentinel to detect "more available" without a count query.
+  const { data, error } = await supabase
+    .from("chat_messages")
+    .select(
+      "id, role, content, mode_at_send, payload, learned_fact, created_at",
+    )
+    .eq("chat_id", chatId)
+    .order("created_at", { ascending: false })
+    .limit(limit + 1);
+  if (error) {
+    console.error("loadChatMessages:", error.message);
+    return { messages: [], hasMore: false };
+  }
+  const rows = data ?? [];
+  const hasMore = rows.length > limit;
+  const trimmed = hasMore ? rows.slice(0, limit) : rows;
+  const messages = trimmed
+    .filter((r) => r.role === "user" || r.role === "agent")
+    .map(rowToMessageView)
+    .reverse(); // back to ascending for the UI
+  return { messages, hasMore };
+}
+
+/**
+ * Load older messages (strictly before `beforeCreatedAt`) for "Load earlier"
+ * pagination. Returns chronologically-ordered batch + whether more remain.
+ */
+export async function loadEarlierChatMessages(
+  chatId: string,
+  beforeCreatedAt: string,
+  limit: number = CHAT_PAGE_SIZE,
+): Promise<{ messages: ChatMessageView[]; hasMore: boolean }> {
   const supabase = createClient();
   const { data, error } = await supabase
     .from("chat_messages")
@@ -62,14 +104,21 @@ export async function loadChatMessages(
       "id, role, content, mode_at_send, payload, learned_fact, created_at",
     )
     .eq("chat_id", chatId)
-    .order("created_at", { ascending: true });
+    .lt("created_at", beforeCreatedAt)
+    .order("created_at", { ascending: false })
+    .limit(limit + 1);
   if (error) {
-    console.error("loadChatMessages:", error.message);
-    return [];
+    console.error("loadEarlierChatMessages:", error.message);
+    return { messages: [], hasMore: false };
   }
-  return (data ?? [])
+  const rows = data ?? [];
+  const hasMore = rows.length > limit;
+  const trimmed = hasMore ? rows.slice(0, limit) : rows;
+  const messages = trimmed
     .filter((r) => r.role === "user" || r.role === "agent")
-    .map(rowToMessageView);
+    .map(rowToMessageView)
+    .reverse();
+  return { messages, hasMore };
 }
 
 function rowToMessageView(row: {
@@ -208,6 +257,8 @@ export interface DashboardData {
   huddles: HuddleView[];
   activeChat: ChatView | null;
   activeMessages: ChatMessageView[];
+  /** True when the active chat has older messages not yet loaded. */
+  activeHasMore: boolean;
   budgetUsedPct: number | null;
   overview: OverviewData | null;
 }
@@ -243,7 +294,17 @@ export async function loadDashboard(
     activeChat = chats[0];
   }
 
-  const activeMessages = activeChat ? await loadChatMessages(activeChat.id) : [];
+  const page = activeChat
+    ? await loadChatMessages(activeChat.id)
+    : { messages: [], hasMore: false };
 
-  return { chats, huddles, activeChat, activeMessages, budgetUsedPct, overview };
+  return {
+    chats,
+    huddles,
+    activeChat,
+    activeMessages: page.messages,
+    activeHasMore: page.hasMore,
+    budgetUsedPct,
+    overview,
+  };
 }

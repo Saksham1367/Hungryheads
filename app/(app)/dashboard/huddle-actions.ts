@@ -177,10 +177,6 @@ export async function triggerHuddleDecision(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
 
-  console.log(
-    `[triggerHuddleDecision] user=${user.id} huddle=${huddleId} mode=${mode}`,
-  );
-
   // Already an open session? Don't double-open.
   const { data: openSession, error: lookupErr } = await supabase
     .from("huddle_sessions")
@@ -193,9 +189,6 @@ export async function triggerHuddleDecision(
     return { ok: false, error: `Lookup failed: ${lookupErr.message}` };
   }
   if (openSession) {
-    console.log(
-      `[triggerHuddleDecision] already-open session ${openSession.id}`,
-    );
     await revalidateBoth(huddleId);
     return { ok: true, sessionId: openSession.id, alreadyOpen: true };
   }
@@ -224,7 +217,6 @@ export async function triggerHuddleDecision(
     };
   }
 
-  console.log(`[triggerHuddleDecision] inserted session ${data.id}`);
   await revalidateBoth(huddleId);
   return { ok: true, sessionId: data.id, alreadyOpen: false };
 }
@@ -387,10 +379,6 @@ export async function decideHuddleSession(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
-
-  console.log(
-    `[decideHuddleSession] user=${user.id} sessionId=${sessionId}`,
-  );
 
   if (!sessionId) {
     return { ok: false, error: "Missing sessionId." };

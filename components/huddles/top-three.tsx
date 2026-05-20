@@ -32,9 +32,7 @@ export function TopThree({
     setSpinning(true);
     setPending(true);
     try {
-      console.log("[Spin] clicked, sessionId=", sessionId);
       const result = await spinHuddleWheel(sessionId);
-      console.log("[Spin] result:", result);
       if (!result.ok) {
         setSpinning(false);
         setError(result.error);
@@ -158,9 +156,7 @@ function RecCard({
     setPickError(null);
     setPicking(true);
     try {
-      console.log("[Pick] sessionId=", sessionId, "rec=", rec.id);
       const result = await pickHuddleWinner(sessionId, rec.id);
-      console.log("[Pick] result:", result);
       if (!result.ok) {
         setPickError(result.error);
         setPicking(false);

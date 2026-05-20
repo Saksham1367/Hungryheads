@@ -9,8 +9,8 @@ import {
   Users,
 } from "lucide-react";
 import { LogoMark } from "@/components/ui/logo";
-import { CHAT_MODES } from "@/lib/chat/modes";
-import { bucketChatsByDay, relativeTime } from "@/lib/chat/util";
+import { ChatRow } from "@/components/chat/chat-row";
+import { bucketChatsByDay } from "@/lib/chat/util";
 import type { ChatView, HuddleView } from "@/lib/chat/types";
 import { cn } from "@/lib/utils/cn";
 
@@ -146,43 +146,29 @@ export function ChatSidebar(props: ChatSidebarProps) {
               <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-semibold text-hh-gray">
                 {g.bucket}
               </div>
-              {g.chats.map((c) => {
-                const mode = CHAT_MODES[c.mode];
-                const active = c.id === props.activeChatId;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => props.onSelectChat(c.id)}
-                    className={cn(
-                      "w-full flex items-start gap-2 px-2.5 py-2 rounded-lg text-left transition-colors",
-                      active
-                        ? "bg-hh-cream border-l-2 border-hh-orange pl-2"
-                        : "hover:bg-hh-cream",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "shrink-0 mt-0.5 px-1.5 py-px text-[9px] font-bold uppercase tracking-wider rounded",
-                        mode.tagClass,
-                      )}
-                    >
-                      {mode.short}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-medium text-hh-charcoal leading-snug truncate">
-                        {c.title}
-                      </div>
-                      <div className="text-[10px] text-hh-gray mt-0.5">
-                        {relativeTime(c.last_message_at)}
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
+              {g.chats.map((c) => (
+                <ChatRow
+                  key={c.id}
+                  chat={c}
+                  active={c.id === props.activeChatId}
+                  onSelect={() => props.onSelectChat(c.id)}
+                  onDeleted={(id) => {
+                    // If the deleted chat was active, route back to "new" so
+                    // the parent doesn't keep a stale ?chat=<id> URL.
+                    if (id === props.activeChatId) props.onNewChat();
+                  }}
+                />
+              ))}
             </div>
           ))}
         </div>
+      </div>
+
+      {/* "Powered by Swiggy" mark — required on surfaces showing Swiggy-originated
+          data (Builders Club docs §16 — co-branding rules). */}
+      <div className="px-3 py-1.5 border-t border-hh-gray-light text-[10px] text-hh-gray flex items-center justify-center gap-1 shrink-0">
+        <span>Powered by</span>
+        <span className="font-bold text-[#FF5200]">Swiggy</span>
       </div>
 
       {/* Footer */}

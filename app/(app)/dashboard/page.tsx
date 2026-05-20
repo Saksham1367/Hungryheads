@@ -52,6 +52,7 @@ export default async function DashboardPage({
       initialHuddles={dash.huddles}
       initialActiveChat={dash.activeChat}
       initialMessages={dash.activeMessages}
+      initialHasMore={dash.activeHasMore}
       budgetUsedPct={dash.budgetUsedPct}
       overview={dash.overview}
     />

@@ -95,7 +95,30 @@ export async function placeOrderFromMessage(
     };
   }
 
-  // Phase-1 mock order id. Step 12 swaps for the real Swiggy MCP response.
+  // ────────────────────────────────────────────────────────────────────────
+  // STEP 12 — replace with live MCP `place_food_order`. Spec contract:
+  //
+  //   `place_food_order` is NOT idempotent (docs §8, master rule #4). On 5xx
+  //   or network failure DO NOT blind-retry — wait 2–5s, call `get_food_orders`,
+  //   and treat the original call as success if the new order appears.
+  //
+  // Pseudocode for the live path:
+  //
+  //   const before = await mcp.callTool({ name: "get_food_orders" });
+  //   try {
+  //     order = await mcp.callTool({ name: "place_food_order",
+  //                                  arguments: { paymentMethod: "COD" } });
+  //   } catch (e) {
+  //     if (e.status >= 500) {
+  //       await sleep(3000);
+  //       const after = await mcp.callTool({ name: "get_food_orders" });
+  //       const placed = diffOrders(before, after);
+  //       if (placed) order = placed; else throw e;   // genuine failure
+  //     } else throw e;
+  //   }
+  //
+  // Wall-clock retry budget capped at SWIGGY_LIMITS.RETRY_BUDGET_MS (30s).
+  // ────────────────────────────────────────────────────────────────────────
   const mockOrderId = `mock_${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;

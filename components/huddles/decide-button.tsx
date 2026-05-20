@@ -12,9 +12,7 @@ export function DecideButton({ huddleId }: { huddleId: string }) {
     setError(null);
     setPending(true);
     try {
-      console.log("[DecideButton] clicked, huddleId=", huddleId);
       const result = await triggerHuddleDecision(huddleId, "order_in");
-      console.log("[DecideButton] result:", result);
       if (!result.ok) {
         setError(result.error);
         setPending(false);

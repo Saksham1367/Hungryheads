@@ -18,9 +18,9 @@ const STEPS = [
   {
     n: 3,
     icon: Utensils,
-    title: "Use HungryHeads",
+    title: "Start ordering",
     blurb:
-      "FoodHuddle for friends, SafePlate at every checkout, SpendSmart on every bill, VoiceOrder on WhatsApp. One profile, four superpowers.",
+      "FoodHuddle settles the group debate, SafePlate guards every checkout, SpendSmart watches the bill. One profile, every superpower.",
   },
 ] as const;
 

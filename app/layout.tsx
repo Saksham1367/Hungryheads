@@ -51,6 +51,16 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jakarta.variable}`}>
       <body className="font-sans antialiased min-h-screen bg-background text-foreground">
+        {/* Keyboard-only skip-to-content — hidden until focused. Lighthouse
+            a11y win and lets screen-reader users jump past the nav. The
+            target is the <main id="features"> on the homepage and the
+            <main> tag inside each app route. */}
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:rounded-lg focus:bg-hh-black focus:text-white focus:px-4 focus:py-2 focus:shadow-lg"
+        >
+          Skip to main content
+        </a>
         {children}
       </body>
     </html>

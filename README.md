@@ -9,10 +9,8 @@ Four features sharing one user profile and one AI agent core:
 |---|---|
 | **SafePlate** | Allergy & diet safety net — filters menus, blocks risky items at checkout |
 | **SpendSmart** | Monthly budget guardrail with live impact + insights |
-| **VoiceOrder** | Speak-to-order via WhatsApp + smart-reorder cadence learning |
 | **FoodHuddle** | Real-time group decision engine with spin-the-wheel |
-
-The full product brief lives at [`../HungryHeads-Project-Brief.md`](../HungryHeads-Project-Brief.md). Read it before contributing.
+| **VoiceOrder** | Speak-to-order via WhatsApp + smart-reorder cadence learning *(upcoming)* |
 
 ---
 
@@ -46,15 +44,8 @@ lib/                Domain logic (Supabase, Swiggy MCP, agent, huddle, utils)
 types/              Shared TypeScript types (database, swiggy, domain)
 fixtures/mcp/       Mock Swiggy MCP responses for local-first dev
 supabase/           SQL migrations + seed data
+scripts/            Local dev tooling (demo data seeding)
 ```
-
-Full breakdown in brief §10.
-
-## Build phases
-
-- **Phase 1** — MVP for Builders Club submission (homepage → onboarding → dashboard → FoodHuddle → SafePlate → demo video)
-- **Phase 2** — Live MCP integration, SpendSmart, smart reorders, UPI splits
-- **Phase 3** — Voice via WhatsApp + Whisper, multilingual, learned personalization
 
 ## Powered by
 

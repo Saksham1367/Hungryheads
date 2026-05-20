@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Check,
   Pencil,
+  RotateCcw,
   ShieldCheck,
   ShoppingBag,
   Sparkles,
@@ -308,7 +309,7 @@ export function OverviewDrawer({
           )}
         </div>
 
-        <footer className="sticky bottom-0 border-t border-hh-gray-light bg-white p-4">
+        <footer className="sticky bottom-0 border-t border-hh-gray-light bg-white p-4 space-y-2">
           <Link
             href="/profile"
             className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-xl bg-hh-orange hover:bg-hh-orange-dark text-white text-sm font-semibold transition-colors"
@@ -320,6 +321,19 @@ export function OverviewDrawer({
             </span>
             <ArrowRight className="h-4 w-4" />
           </Link>
+          <form
+            action="/api/account/reset-onboarding"
+            method="post"
+            onSubmit={onClose}
+          >
+            <button
+              type="submit"
+              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-hh-cream border border-hh-gray-light text-xs font-medium text-hh-charcoal hover:border-hh-orange/60 transition-colors"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Re-run onboarding
+            </button>
+          </form>
         </footer>
       </aside>
     </div>

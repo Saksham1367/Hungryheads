@@ -27,9 +27,7 @@ export function DecideNowControls({
     setError(null);
     setPending(true);
     try {
-      console.log("[DecideNow] clicked, sessionId=", sessionId);
       const result = await decideHuddleSession(sessionId);
-      console.log("[DecideNow] result:", result);
       if (!result.ok) {
         setError(result.error);
         setPending(false);
@@ -48,7 +46,6 @@ export function DecideNowControls({
     setError(null);
     setPending(true);
     try {
-      console.log("[DecideNow] cancel, sessionId=", sessionId);
       await cancelHuddleSession(sessionId);
       window.location.reload();
     } catch (err) {

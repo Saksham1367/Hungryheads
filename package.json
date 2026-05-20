@@ -6,7 +6,11 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "cleanup:demo": "tsx scripts/cleanup-demo.ts",
+    "lighthouse": "node -e \"require('fs').mkdirSync('.lighthouse',{recursive:true})\" && npx -y lighthouse http://localhost:3000/ --preset=desktop --output=html --output-path=./.lighthouse/home.html --chrome-flags=\"--headless=new\" --quiet --view",
+    "lighthouse:mobile": "node -e \"require('fs').mkdirSync('.lighthouse',{recursive:true})\" && npx -y lighthouse http://localhost:3000/ --output=html --output-path=./.lighthouse/home-mobile.html --chrome-flags=\"--headless=new\" --quiet --view"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
@@ -21,6 +25,8 @@
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.75.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "zod": "^4.4.2",
@@ -34,6 +40,7 @@
     "eslint-config-next": "14.2.35",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.22.0",
     "typescript": "^5"
   }
 }

@@ -18,6 +18,7 @@ import { PollForm } from "@/components/huddles/poll-form";
 import { DecideNowControls } from "@/components/huddles/decide-now";
 import { TopThree } from "@/components/huddles/top-three";
 import { WinnerCard } from "@/components/huddles/winner-card";
+import { HuddleLiveRefresh } from "@/components/huddles/live-refresh";
 import { loadHuddleByCode } from "@/lib/huddles/queries";
 import { formatRupees } from "@/lib/utils/format";
 import { relativeTime } from "@/lib/chat/util";
@@ -71,6 +72,7 @@ export default async function HuddlePage({
   return (
     <div className="min-h-screen bg-hh-cream">
       <AppHeader />
+      <HuddleLiveRefresh huddleId={huddle.id} sessionId={session?.id} />
       <div className="container max-w-3xl py-8 md:py-10 space-y-6">
         <Link
           href="/dashboard"

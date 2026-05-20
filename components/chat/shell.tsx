@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MoreHorizontal, Share2 } from "lucide-react";
+import { Check, Loader2, Menu, Share2 } from "lucide-react";
+import { cn } from "@/lib/utils/cn";
 import { ChatSidebar } from "@/components/chat/sidebar";
 import { ModePicker } from "@/components/chat/mode-picker";
 import { ChatThread } from "@/components/chat/thread";
@@ -19,7 +20,11 @@ import type {
   HuddleView,
 } from "@/lib/chat/types";
 import type { OverviewData } from "@/lib/chat/overview";
-import { updateChatMode } from "@/app/(app)/dashboard/actions";
+import {
+  loadEarlierMessagesAction,
+  shareChat,
+  updateChatMode,
+} from "@/app/(app)/dashboard/actions";
 
 export interface ChatShellProps {
   userInitial: string;
@@ -28,6 +33,7 @@ export interface ChatShellProps {
   initialHuddles: HuddleView[];
   initialActiveChat: ChatView | null;
   initialMessages: ChatMessageView[];
+  initialHasMore: boolean;
   budgetUsedPct: number | null;
   overview: OverviewData | null;
 }
@@ -45,6 +51,10 @@ export function ChatShell(props: ChatShellProps) {
   const [messages, setMessages] = useState<ChatMessageView[]>(
     props.initialMessages,
   );
+  const [hasMore, setHasMore] = useState(props.initialHasMore);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareToast, setShareToast] = useState<string | null>(null);
   const [mode, setMode] = useState<ChatMode>(
     props.initialActiveChat?.mode ?? "hungry",
   );
@@ -53,6 +63,70 @@ export function ChatShell(props: ChatShellProps) {
   const [huddleModal, setHuddleModal] = useState<
     null | "create" | "join"
   >(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // ─── Share: snapshot the current chat + copy URL to clipboard ──────────
+  const onShare = async () => {
+    if (!activeChat || sharing) return;
+    setShareToast(null);
+    setSharing(true);
+    try {
+      const res = await shareChat(activeChat.id);
+      if (!res.ok) {
+        setShareToast(res.error);
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(res.url);
+        setShareToast("Link copied!");
+      } catch {
+        // Clipboard API blocked (e.g. insecure context) — surface the URL.
+        setShareToast(res.url);
+      }
+    } catch (err) {
+      console.error("[shareChat] threw:", err);
+      setShareToast(
+        err instanceof Error ? err.message : "Couldn't create share link.",
+      );
+    } finally {
+      setSharing(false);
+      setTimeout(() => setShareToast(null), 4000);
+    }
+  };
+
+  // ─── Pagination: load older messages ─────────────────────────────────
+  const onLoadMore = async () => {
+    if (loadingMore || !hasMore || !activeChat) return;
+    const oldest = messages.find((m) => m.created_at);
+    if (!oldest?.created_at) return;
+    setLoadingMore(true);
+    try {
+      const res = await loadEarlierMessagesAction(
+        activeChat.id,
+        oldest.created_at,
+      );
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setMessages((prev) => [...res.messages, ...prev]);
+      setHasMore(res.hasMore);
+    } catch (err) {
+      console.error("[ChatShell] loadEarlier threw:", err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  // Esc closes the mobile sidebar.
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [sidebarOpen]);
   const [overviewOpen, setOverviewOpen] = useState(false);
 
   const meta = CHAT_MODES[mode];
@@ -206,26 +280,79 @@ export function ChatShell(props: ChatShellProps) {
     }
   };
 
-  return (
-    <div className="grid grid-cols-[280px_1fr] h-screen overflow-hidden bg-hh-cream">
-      <ChatSidebar
-        userInitial={props.userInitial}
-        userFullName={props.userFullName}
-        chats={props.initialChats}
-        huddles={props.initialHuddles}
-        activeChatId={activeChat?.id}
-        budgetUsedPct={props.budgetUsedPct ?? undefined}
-        onNewChat={onNewChat}
-        onOpenOverview={() => setOverviewOpen(true)}
-        onSelectChat={onSelectChat}
-        onOpenHuddle={(code) => router.push(`/huddle/${code}`)}
-        onCreateHuddle={() => setHuddleModal("create")}
-        onJoinHuddle={() => setHuddleModal("join")}
-      />
+  // Wrap every sidebar interaction so picking/creating a chat also closes
+  // the mobile drawer.
+  const closeMobile = () => setSidebarOpen(false);
 
-      <main className="flex flex-col min-w-0 min-h-0">
-        <header className="px-6 py-3 border-b border-hh-gray-light bg-hh-cream/80 backdrop-blur-md flex items-center justify-between gap-4 shrink-0">
-          <div className="min-w-0">
+  // Single source of truth for both sidebar instances (desktop + mobile).
+  const sidebarProps = {
+    userInitial: props.userInitial,
+    userFullName: props.userFullName,
+    chats: props.initialChats,
+    huddles: props.initialHuddles,
+    activeChatId: activeChat?.id,
+    budgetUsedPct: props.budgetUsedPct ?? undefined,
+    onNewChat: () => {
+      closeMobile();
+      onNewChat();
+    },
+    onOpenOverview: () => {
+      closeMobile();
+      setOverviewOpen(true);
+    },
+    onSelectChat: (id: string) => {
+      closeMobile();
+      onSelectChat(id);
+    },
+    onOpenHuddle: (code: string) => {
+      closeMobile();
+      router.push(`/huddle/${code}`);
+    },
+    onCreateHuddle: () => {
+      closeMobile();
+      setHuddleModal("create");
+    },
+    onJoinHuddle: () => {
+      closeMobile();
+      setHuddleModal("join");
+    },
+  };
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-hh-cream">
+      {/* ── Desktop sidebar — always visible, fixed-width flex item ─────── */}
+      <div className="hidden md:flex md:flex-col md:w-[280px] md:shrink-0 md:h-full">
+        <ChatSidebar {...sidebarProps} />
+      </div>
+
+      {/* ── Mobile sidebar — fixed overlay, toggleable ──────────────────── */}
+      {sidebarOpen && (
+        <div
+          aria-hidden
+          onClick={closeMobile}
+          className="fixed inset-0 bg-black/40 z-30 md:hidden animate-fade-in"
+        />
+      )}
+      <div
+        className={cn(
+          "md:hidden fixed inset-y-0 left-0 z-40 w-[280px] transition-transform duration-200 ease-out",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <ChatSidebar {...sidebarProps} />
+      </div>
+
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full">
+        <header className="px-4 md:px-6 py-3 border-b border-hh-gray-light bg-hh-cream/80 backdrop-blur-md flex items-center justify-between gap-3 md:gap-4 shrink-0">
+          <button
+            type="button"
+            aria-label="Open sidebar"
+            onClick={() => setSidebarOpen(true)}
+            className="md:hidden p-2 -ml-2 text-hh-charcoal rounded-lg hover:bg-hh-orange-light"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="min-w-0 flex-1">
             <h1 className="font-display text-base font-bold tracking-tight text-hh-black truncate">
               {activeChat?.title ?? "New chat"}
             </h1>
@@ -235,13 +362,31 @@ export function ChatShell(props: ChatShellProps) {
             </div>
           </div>
           <ModePicker value={mode} onChange={onChangeMode} />
-          <div className="flex items-center gap-2">
-            <IconBtn label="Share">
-              <Share2 className="h-4 w-4" />
-            </IconBtn>
-            <IconBtn label="More">
-              <MoreHorizontal className="h-4 w-4" />
-            </IconBtn>
+          <div className="relative flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onShare}
+              disabled={!activeChat || sharing}
+              title="Share this chat"
+              aria-label="Share this chat"
+              className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-hh-gray-light bg-white hover:bg-hh-orange-light hover:border-hh-orange-light hover:text-hh-orange-dark text-hh-charcoal text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {sharing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Share2 className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">Share</span>
+            </button>
+            {shareToast && (
+              <div
+                role="status"
+                className="absolute right-0 top-11 z-20 inline-flex items-center gap-1.5 rounded-lg bg-hh-black text-white text-xs font-medium px-3 py-2 shadow-lg animate-fade-in max-w-[260px]"
+              >
+                <Check className="h-3.5 w-3.5 text-hh-success shrink-0" />
+                <span className="truncate">{shareToast}</span>
+              </div>
+            )}
           </div>
         </header>
 
@@ -252,7 +397,12 @@ export function ChatShell(props: ChatShellProps) {
             onPick={onSend}
           />
         ) : (
-          <ChatThread messages={messages} />
+          <ChatThread
+            messages={messages}
+            hasMore={hasMore}
+            loadingMore={loadingMore}
+            onLoadMore={onLoadMore}
+          />
         )}
 
         {error && (
@@ -279,25 +429,6 @@ export function ChatShell(props: ChatShellProps) {
         onClose={() => setHuddleModal(null)}
       />
     </div>
-  );
-}
-
-function IconBtn({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      className="h-9 w-9 rounded-lg border border-hh-gray-light bg-white hover:bg-hh-orange-light hover:border-hh-orange-light hover:text-hh-orange-dark text-hh-charcoal flex items-center justify-center transition-colors"
-    >
-      {children}
-    </button>
   );
 }
 
