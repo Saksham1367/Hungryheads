@@ -3,7 +3,11 @@
  *
  * Live Anthropic streaming agent.
  *
- * Body: { chatId: string | null, text: string, mode: ChatMode }
+ * Two content-types are accepted:
+ *   - application/json:        { chatId, text, mode }
+ *   - multipart/form-data:     chatId, text, mode + optional `file` (one
+ *                              PDF / DOC(X) / XLS(X) / CSV up to 5 MB)
+ *
  * Response: text/event-stream of JSON-encoded events:
  *   { type: "start", chatId, userMessageId }       — once, after user msg persists
  *   { type: "delta", text }                         — many, while Claude streams
@@ -26,8 +30,20 @@ import { extractOrderCard } from "@/lib/agent/order-card";
 import { extractLearnedFacts } from "@/lib/agent/learned";
 import { AGENT_TOOLS, runTool } from "@/lib/agent/tools";
 import { checkRateLimit } from "@/lib/ratelimit";
+import {
+  ACCEPTED_MIME_TYPES,
+  MAX_ATTACHMENT_BYTES,
+  classifyAttachment,
+  extractAttachmentText,
+} from "@/lib/chat/attachments";
+import {
+  categorizeSdkError,
+  describeChatError,
+  type ChatErrorCode,
+} from "@/lib/chat/errors";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Json } from "@/types/database";
+import type { ChatAttachmentMeta } from "@/lib/chat/types";
 import type { ChatMessagePayload, ChatMode } from "@/types/domain";
 
 const MAX_TOOL_TURNS = 4;
@@ -44,33 +60,46 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface ChatRequest {
+interface ParsedInput {
   chatId: string | null;
   text: string;
   mode: ChatMode;
+  file: ParsedFile | null;
+}
+
+interface ParsedFile {
+  buffer: Buffer;
+  filename: string;
+  mime: string;
+  size: number;
 }
 
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
 
   // ─── Parse + validate ───────────────────────────────────────────────────
-  let body: ChatRequest;
+  let parsed: ParsedInput;
   try {
-    body = (await request.json()) as ChatRequest;
-  } catch {
-    return errorResponse("invalid_json", 400);
+    parsed = await parseInput(request);
+  } catch (err) {
+    const code =
+      err instanceof Error && isKnownParseCode(err.message)
+        ? (err.message as ChatErrorCode)
+        : "internal";
+    const status =
+      code === "file_too_large" ? 413 : code === "unsupported_file" ? 415 : 400;
+    return errorResponse(code, status);
   }
 
-  const text = (body.text ?? "").trim();
-  if (!text) return errorResponse("empty_message", 400);
-  const mode: ChatMode = isChatMode(body.mode) ? body.mode : "hungry";
+  const { text, mode, file } = parsed;
+  if (!text && !file) return errorResponse("empty_message", 400);
 
   // ─── Auth ───────────────────────────────────────────────────────────────
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return errorResponse("unauthorized", 401);
+  if (!user) return errorResponse("auth", 401);
 
   // ─── Rate limit (per authenticated user) ────────────────────────────────
   const rl = checkRateLimit(
@@ -97,20 +126,68 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // ─── Process attachment (extract text, build content blocks) ────────────
+  let persistedContent = text;
+  let attachmentMeta: ChatAttachmentMeta | null = null;
+  let pdfDocumentBlock: Anthropic.Messages.DocumentBlockParam | null = null;
+
+  if (file) {
+    const kind = classifyAttachment(file.mime, file.filename);
+    if (!kind) return errorResponse("unsupported_file", 415);
+
+    attachmentMeta = {
+      filename: file.filename,
+      mime_type: file.mime,
+      size_bytes: file.size,
+    };
+
+    if (kind === "pdf") {
+      // Native PDF passthrough — this turn only. Persist a marker so future
+      // turns know an attachment was present, but the binary isn't retained.
+      pdfDocumentBlock = {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: file.buffer.toString("base64"),
+        },
+      };
+      const marker = `<attachment filename="${escapeAttr(file.filename)}" kind="pdf">[PDF analyzed in this turn — binary not retained in history]</attachment>`;
+      persistedContent = text ? `${marker}\n\n${text}` : marker;
+    } else {
+      // Extract text and wrap in an <attachment> block. Stored verbatim in
+      // chat_messages.content so future turns can refer back to the data.
+      try {
+        const extracted = await extractAttachmentText(kind, file.buffer);
+        const body =
+          extracted.text + (extracted.truncated ? "\n\n[...truncated]" : "");
+        const block = `<attachment filename="${escapeAttr(file.filename)}" kind="${kind}">${body}</attachment>`;
+        persistedContent = text ? `${block}\n\n${text}` : block;
+      } catch (err) {
+        console.error("[chat] attachment_parse failed:", err);
+        return errorResponse("attachment_parse", 422);
+      }
+    }
+  }
+
   // ─── Resolve / create chat ──────────────────────────────────────────────
-  let chatId = body.chatId;
+  let chatId = parsed.chatId;
   let isNewChat = false;
   if (!chatId) {
+    const titleSeed = text || file?.filename || "New chat";
     const { data, error } = await supabase
       .from("chats")
       .insert({
         user_id: user.id,
         mode,
-        title: deriveChatTitle(text),
+        title: deriveChatTitle(titleSeed),
       })
       .select("id")
       .single();
-    if (error || !data) return errorResponse(`create_chat:${error?.message}`, 500);
+    if (error || !data) {
+      console.error("[chat] create_chat failed:", error?.message);
+      return errorResponse("internal", 500);
+    }
     chatId = data.id;
     isNewChat = true;
   }
@@ -121,12 +198,16 @@ export async function POST(request: NextRequest) {
     .insert({
       chat_id: chatId,
       role: "user",
-      content: text,
+      content: persistedContent,
       mode_at_send: mode,
+      attachment: attachmentMeta as unknown as Json,
     })
     .select("id, created_at")
     .single();
-  if (userErr || !userRow) return errorResponse(`user_insert:${userErr?.message}`, 500);
+  if (userErr || !userRow) {
+    console.error("[chat] user_insert failed:", userErr?.message);
+    return errorResponse("internal", 500);
+  }
 
   // First user message in chat? Update title.
   if (!isNewChat) {
@@ -136,9 +217,10 @@ export async function POST(request: NextRequest) {
       .eq("chat_id", chatId)
       .eq("role", "user");
     if ((count ?? 0) <= 1) {
+      const titleSeed = text || file?.filename || "New chat";
       await supabase
         .from("chats")
-        .update({ title: deriveChatTitle(text), mode })
+        .update({ title: deriveChatTitle(titleSeed), mode })
         .eq("id", chatId);
     }
   }
@@ -172,6 +254,25 @@ export async function POST(request: NextRequest) {
     return errorResponse("history_corrupted", 500);
   }
 
+  // For PDFs we override the last user turn's content with a content-block
+  // array containing the document. Everything else stays as a plain string.
+  const turnMessages: Anthropic.Messages.MessageParam[] = messages.map(
+    (m) => ({ role: m.role, content: m.content }),
+  );
+  if (pdfDocumentBlock) {
+    const lastIdx = turnMessages.length - 1;
+    const textBlock: Anthropic.Messages.TextBlockParam = {
+      type: "text",
+      text:
+        text ||
+        "I've attached a document. Please read it and help me with whatever it covers.",
+    };
+    turnMessages[lastIdx] = {
+      role: "user",
+      content: [pdfDocumentBlock, textBlock],
+    };
+  }
+
   // ─── Stream ─────────────────────────────────────────────────────────────
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -193,9 +294,6 @@ export async function POST(request: NextRequest) {
       // against the fixture-backed mock (Step 12 swaps for live MCP) and feed
       // results back. Capped at MAX_TOOL_TURNS to prevent runaway loops.
       let assembled = "";
-      const turnMessages: Anthropic.Messages.MessageParam[] = messages.map(
-        (m) => ({ role: m.role, content: m.content }),
-      );
       try {
         const anthropic = anthropicClient();
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -266,8 +364,50 @@ export async function POST(request: NextRequest) {
           // Loop continues — next iteration streams the agent's follow-up.
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "stream_failed";
-        send({ type: "error", message: msg });
+        console.error("[chat] stream failed:", err);
+        const code = categorizeSdkError(err);
+        const info = describeChatError(code);
+
+        // Persist a failed agent turn so the error survives chat-switches
+        // and reloads. Stores any partial streamed text in `content` plus
+        // the full error in `payload` (type: "error").
+        const errorPayload: ChatMessagePayload = {
+          type: "error",
+          error: {
+            code: info.code,
+            title: info.title,
+            detail: info.detail,
+            retryable: info.retryable,
+          },
+        };
+        const { data: errorRow, error: insertErr } = await supabase
+          .from("chat_messages")
+          .insert({
+            chat_id: chatId,
+            role: "agent",
+            content: assembled,
+            mode_at_send: mode,
+            payload: errorPayload as unknown as Json,
+          })
+          .select("id")
+          .single();
+        if (insertErr) {
+          console.error("[chat] persist error row failed:", insertErr.message);
+        }
+
+        // Touch chat metadata so the sidebar sorts this conversation up top.
+        await supabase
+          .from("chats")
+          .update({ last_message_at: new Date().toISOString() })
+          .eq("id", chatId);
+
+        send({
+          type: "error",
+          code,
+          message: info.detail,
+          agentMessageId: errorRow?.id ?? null,
+          chatId,
+        });
         controller.close();
         return;
       }
@@ -299,10 +439,9 @@ export async function POST(request: NextRequest) {
         .select("id, created_at")
         .single();
       if (agentErr || !agentRow) {
-        send({
-          type: "error",
-          message: `agent_insert:${agentErr?.message ?? "unknown"}`,
-        });
+        console.error("[chat] agent_insert failed:", agentErr?.message);
+        const info = describeChatError("internal");
+        send({ type: "error", code: "internal", message: info.detail });
         controller.close();
         return;
       }
@@ -350,7 +489,83 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function errorResponse(code: string, status: number): Response {
+// ─── Helpers ──────────────────────────────────────────────────────────────
+
+async function parseInput(request: NextRequest): Promise<ParsedInput> {
+  const ct = request.headers.get("content-type") ?? "";
+
+  if (ct.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const text = String(form.get("text") ?? "").trim();
+    const rawMode = form.get("mode");
+    const modeStr = typeof rawMode === "string" ? rawMode : "";
+    const mode: ChatMode = isChatMode(modeStr) ? modeStr : "hungry";
+    const rawChatId = form.get("chatId");
+    const chatId =
+      typeof rawChatId === "string" && rawChatId && rawChatId !== "null"
+        ? rawChatId
+        : null;
+
+    let file: ParsedFile | null = null;
+    const f = form.get("file");
+    if (f && typeof f === "object" && "arrayBuffer" in f) {
+      const blob = f as File;
+      if (blob.size > 0) {
+        if (blob.size > MAX_ATTACHMENT_BYTES) {
+          throw new Error("file_too_large");
+        }
+        // Accept by MIME OR by extension fallback. Some browsers/OSes report
+        // empty/odd MIMEs for DOC/XLS — `classifyAttachment` does the final
+        // check on both signals.
+        const knownMime = ACCEPTED_MIME_TYPES.has(blob.type);
+        const okExt = /\.(pdf|docx?|xlsx?|csv)$/i.test(blob.name);
+        if (!knownMime && !okExt) {
+          throw new Error("unsupported_file");
+        }
+        const buf = Buffer.from(await blob.arrayBuffer());
+        file = {
+          buffer: buf,
+          filename: blob.name,
+          mime: blob.type || "application/octet-stream",
+          size: blob.size,
+        };
+      }
+    }
+
+    return { chatId, text, mode, file };
+  }
+
+  // JSON path (no attachment).
+  const body = (await request.json()) as {
+    chatId?: string | null;
+    text?: string;
+    mode?: string;
+  };
+  const text = (body.text ?? "").trim();
+  const modeStr = typeof body.mode === "string" ? body.mode : "";
+  const mode: ChatMode = isChatMode(modeStr) ? modeStr : "hungry";
+  return {
+    chatId: body.chatId ?? null,
+    text,
+    mode,
+    file: null,
+  };
+}
+
+function escapeAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+const PARSE_ERROR_CODES = new Set<string>([
+  "file_too_large",
+  "unsupported_file",
+]);
+
+function isKnownParseCode(code: string): code is ChatErrorCode {
+  return PARSE_ERROR_CODES.has(code);
+}
+
+function errorResponse(code: ChatErrorCode, status: number): Response {
   return new Response(JSON.stringify({ error: code }), {
     status,
     headers: { "Content-Type": "application/json" },

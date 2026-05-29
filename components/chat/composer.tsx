@@ -1,9 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Mic, Paperclip, Send, Users } from "lucide-react";
+import { FileSpreadsheet, FileText, Paperclip, Send, X } from "lucide-react";
 import type { ChatMode } from "@/types/domain";
 import { CHAT_MODES } from "@/lib/chat/modes";
+import {
+  ACCEPTED_EXTENSIONS,
+  MAX_ATTACHMENT_BYTES,
+  classifyAttachment,
+  formatBytes,
+} from "@/lib/chat/attachments";
 import { cn } from "@/lib/utils/cn";
 
 export function Composer({
@@ -12,11 +18,14 @@ export function Composer({
   disabled,
 }: {
   mode: ChatMode;
-  onSend: (text: string) => void;
+  onSend: (text: string, file: File | null) => void;
   disabled?: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const meta = CHAT_MODES[mode];
 
   // Auto-grow up to 140px (matches prototype max-height).
@@ -29,10 +38,44 @@ export function Composer({
 
   const submit = () => {
     const t = draft.trim();
-    if (!t || disabled) return;
-    onSend(t);
+    if ((!t && !file) || disabled) return;
+    onSend(t, file);
     setDraft("");
+    setFile(null);
+    setFileError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileError(null);
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    if (f.size > MAX_ATTACHMENT_BYTES) {
+      setFileError(
+        `File too large — max ${formatBytes(MAX_ATTACHMENT_BYTES)}.`,
+      );
+      e.target.value = "";
+      return;
+    }
+    const kind = classifyAttachment(f.type, f.name);
+    if (!kind) {
+      setFileError(
+        "Unsupported file type. Allowed: PDF, DOC, DOCX, XLS, XLSX, CSV.",
+      );
+      e.target.value = "";
+      return;
+    }
+    setFile(f);
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    setFileError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const canSend = (draft.trim().length > 0 || file !== null) && !disabled;
 
   return (
     <div className="px-7 pb-5 pt-3.5 bg-gradient-to-b from-transparent via-hh-cream/70 to-hh-cream relative">
@@ -44,6 +87,10 @@ export function Composer({
             "focus-within:border-hh-orange focus-within:shadow-[0_0_0_3px_rgba(255,107,53,0.16)]",
           )}
         >
+          {file && (
+            <AttachmentChip file={file} onRemove={clearFile} />
+          )}
+
           <textarea
             ref={ref}
             value={draft}
@@ -54,27 +101,38 @@ export function Composer({
                 submit();
               }
             }}
-            placeholder={`Ask anything about food, restaurants, your orders…   try: "reorder my Sunday breakfast"`}
+            placeholder={
+              file
+                ? "Ask anything about this file…"
+                : `Ask anything about food, restaurants, your orders…   try: "reorder my Sunday breakfast"`
+            }
             rows={1}
             disabled={disabled}
             className="w-full resize-none border-none outline-none bg-transparent font-sans text-[14.5px] text-hh-black placeholder:text-hh-gray py-2 leading-[1.5] disabled:opacity-60"
           />
           <div className="flex items-center justify-between px-1 pb-0.5">
             <div className="flex gap-1">
-              <ToolButton title="Attach (Phase 3)" disabled>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_EXTENSIONS}
+                onChange={onPickFile}
+                className="hidden"
+                aria-hidden
+                tabIndex={-1}
+              />
+              <ToolButton
+                title="Attach a document (PDF, DOC, DOCX, XLS, XLSX, CSV — max 5 MB)"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+              >
                 <Paperclip className="h-4 w-4" />
-              </ToolButton>
-              <ToolButton title="Voice (Phase 3)" disabled>
-                <Mic className="h-4 w-4" />
-              </ToolButton>
-              <ToolButton title="Add to huddle" disabled>
-                <Users className="h-4 w-4" />
               </ToolButton>
             </div>
             <button
               type="button"
               onClick={submit}
-              disabled={!draft.trim() || disabled}
+              disabled={!canSend}
               className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-hh-orange text-white hover:bg-hh-orange-dark disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-semibold transition-colors"
             >
               Send
@@ -82,6 +140,15 @@ export function Composer({
             </button>
           </div>
         </div>
+
+        {fileError && (
+          <div
+            role="alert"
+            className="mt-2 px-3 py-1.5 rounded-lg bg-red-50 border border-hh-danger/30 text-xs text-hh-danger"
+          >
+            {fileError}
+          </div>
+        )}
 
         <div className="mt-2 px-1.5 flex items-center justify-between text-[11px] text-hh-gray">
           <span className="inline-flex items-center gap-1.5">
@@ -98,20 +165,65 @@ export function Composer({
   );
 }
 
+function AttachmentChip({
+  file,
+  onRemove,
+}: {
+  file: File;
+  onRemove: () => void;
+}) {
+  const kind = classifyAttachment(file.type, file.name);
+  const isSheet = kind === "xls" || kind === "xlsx" || kind === "csv";
+  const Icon = isSheet ? FileSpreadsheet : FileText;
+  const tone = isSheet ? "text-emerald-600" : "text-hh-orange-dark";
+  return (
+    <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-hh-cream border border-hh-gray-light max-w-fit">
+      <span
+        className={cn(
+          "inline-flex items-center justify-center h-8 w-8 rounded-lg bg-white border border-hh-gray-light shrink-0",
+          tone,
+        )}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 max-w-[260px]">
+        <div className="text-[12.5px] font-semibold text-hh-charcoal truncate">
+          {file.name}
+        </div>
+        <div className="text-[10.5px] text-hh-gray tabular">
+          {formatBytes(file.size)} · {kind?.toUpperCase() ?? "FILE"}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove attachment"
+        className="ml-1 h-6 w-6 inline-flex items-center justify-center rounded-full text-hh-gray hover:text-hh-charcoal hover:bg-white transition-colors shrink-0"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
 function ToolButton({
   title,
   disabled,
+  onClick,
   children,
 }: {
   title: string;
   disabled?: boolean;
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       title={title}
+      aria-label={title}
       disabled={disabled}
+      onClick={onClick}
       className="h-8 w-8 rounded-lg text-hh-gray hover:text-hh-orange-dark hover:bg-hh-cream disabled:opacity-40 disabled:hover:bg-transparent transition-colors flex items-center justify-center"
     >
       {children}

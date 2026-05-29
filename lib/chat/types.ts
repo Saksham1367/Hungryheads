@@ -6,6 +6,7 @@
  * once on the server and passed down to client components. Keeps `chat/*`
  * components free of Supabase imports.
  */
+import type { ChatErrorInfo } from "@/lib/chat/errors";
 import type {
   ChatMessagePayload,
   ChatMode,
@@ -20,6 +21,12 @@ export interface ChatView {
   last_message_at: string;
 }
 
+export interface ChatAttachmentMeta {
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+}
+
 export interface ChatMessageView {
   id: string;
   role: "user" | "agent";
@@ -31,6 +38,15 @@ export interface ChatMessageView {
   learned?: string;
   /** Raw payload — kept around so future card types render cleanly. */
   payload?: ChatMessagePayload;
+  /** File attached to the user's message (rendered as a pill in the bubble). */
+  attachment?: ChatAttachmentMeta;
+  /**
+   * Transient — set when an agent turn failed (network / out-of-credits /
+   * overloaded / etc). Renders as an inline error card inside the agent
+   * bubble. Never persisted to DB; only present on the optimistic message
+   * while the failed turn is still on screen.
+   */
+  error?: ChatErrorInfo;
   created_at: string;
   /**
    * Transient UI-only — name of the tool the agent is currently invoking.

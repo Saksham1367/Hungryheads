@@ -6,11 +6,14 @@ import { createClient } from "@/lib/supabase/server";
 import { huddleInitials, huddleVariant, relativeTime } from "@/lib/chat/util";
 import { isChatMode } from "@/lib/chat/modes";
 import { loadOverviewData, type OverviewData } from "@/lib/chat/overview";
+import { describeChatError, isChatErrorCode } from "@/lib/chat/errors";
 import type {
   ChatMessagePayload,
+  ChatTurnErrorPayload,
   OrderSummaryPayload,
 } from "@/types/domain";
 import type {
+  ChatAttachmentMeta,
   ChatMessageView,
   ChatView,
   HuddleView,
@@ -69,7 +72,7 @@ export async function loadChatMessages(
   const { data, error } = await supabase
     .from("chat_messages")
     .select(
-      "id, role, content, mode_at_send, payload, learned_fact, created_at",
+      "id, role, content, mode_at_send, payload, learned_fact, attachment, created_at",
     )
     .eq("chat_id", chatId)
     .order("created_at", { ascending: false })
@@ -101,7 +104,7 @@ export async function loadEarlierChatMessages(
   const { data, error } = await supabase
     .from("chat_messages")
     .select(
-      "id, role, content, mode_at_send, payload, learned_fact, created_at",
+      "id, role, content, mode_at_send, payload, learned_fact, attachment, created_at",
     )
     .eq("chat_id", chatId)
     .lt("created_at", beforeCreatedAt)
@@ -128,29 +131,97 @@ function rowToMessageView(row: {
   mode_at_send: string;
   payload: unknown;
   learned_fact: string | null;
+  attachment: unknown;
   created_at: string;
 }): ChatMessageView {
   const payload = parsePayload(row.payload);
+  const attachment = parseAttachment(row.attachment);
+  const error =
+    payload?.type === "error"
+      ? describeChatError(
+          isChatErrorCode(payload.error.code) ? payload.error.code : "unknown",
+        )
+      : undefined;
   return {
     id: row.id,
     role: row.role === "agent" ? "agent" : "user",
-    text: row.content,
+    text: stripAttachmentBlock(row.content),
     mode_at_send: isChatMode(row.mode_at_send) ? row.mode_at_send : "hungry",
     order: payload?.type === "order_summary" ? payload.data : undefined,
     learned: row.learned_fact ?? undefined,
     payload: payload ?? undefined,
+    attachment: attachment ?? undefined,
+    error,
     created_at: row.created_at,
   };
 }
 
+/**
+ * Strip the server-injected <attachment>...</attachment> block from displayed
+ * text. The block is kept in `content` so the agent's history contains it, but
+ * the UI shows the user's actual prose plus a separate file pill.
+ */
+function stripAttachmentBlock(content: string): string {
+  return content
+    .replace(/<attachment[\s\S]*?<\/attachment>\n?/g, "")
+    .trim();
+}
+
+function parseAttachment(raw: unknown): ChatAttachmentMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as {
+    filename?: unknown;
+    mime_type?: unknown;
+    size_bytes?: unknown;
+  };
+  if (
+    typeof a.filename === "string" &&
+    typeof a.mime_type === "string" &&
+    typeof a.size_bytes === "number"
+  ) {
+    return {
+      filename: a.filename,
+      mime_type: a.mime_type,
+      size_bytes: a.size_bytes,
+    };
+  }
+  return null;
+}
+
 function parsePayload(raw: unknown): ChatMessagePayload | null {
   if (!raw || typeof raw !== "object") return null;
-  const p = raw as { type?: unknown; data?: unknown; fact?: unknown };
+  const p = raw as {
+    type?: unknown;
+    data?: unknown;
+    fact?: unknown;
+    error?: unknown;
+  };
   if (p.type === "order_summary" && p.data && typeof p.data === "object") {
     return { type: "order_summary", data: p.data as OrderSummaryPayload };
   }
   if (p.type === "memory_learned" && typeof p.fact === "string") {
     return { type: "memory_learned", fact: p.fact };
+  }
+  if (p.type === "error" && p.error && typeof p.error === "object") {
+    const err = p.error as {
+      code?: unknown;
+      title?: unknown;
+      detail?: unknown;
+      retryable?: unknown;
+    };
+    if (
+      typeof err.code === "string" &&
+      typeof err.title === "string" &&
+      typeof err.detail === "string"
+    ) {
+      const errorPayload: ChatTurnErrorPayload = {
+        code: err.code,
+        title: err.title,
+        detail: err.detail,
+        retryable: !!err.retryable,
+      };
+      return { type: "error", error: errorPayload };
+    }
   }
   return null;
 }

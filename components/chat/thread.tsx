@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Check,
   ChevronUp,
+  FileSpreadsheet,
+  FileText,
   Loader2,
   Sparkles,
 } from "lucide-react";
@@ -12,7 +14,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils/cn";
 import { formatRupees } from "@/lib/utils/format";
-import type { ChatMessageView } from "@/lib/chat/types";
+import { classifyAttachment, formatBytes } from "@/lib/chat/attachments";
+import type { ChatErrorInfo } from "@/lib/chat/errors";
+import type { ChatAttachmentMeta, ChatMessageView } from "@/lib/chat/types";
 import type { OrderSummaryPayload } from "@/types/domain";
 import { placeOrderFromMessage } from "@/app/(app)/dashboard/order-actions";
 
@@ -62,18 +66,32 @@ export function ChatThread({
 
 function Turn({ message }: { message: ChatMessageView }) {
   if (message.role === "user") {
+    const hasText = message.text.trim().length > 0;
     return (
-      <div className="flex justify-end w-full">
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-hh-orange text-white px-4 py-3 text-sm leading-relaxed shadow-md shadow-hh-orange/30">
-          {message.text}
-        </div>
+      <div className="flex flex-col items-end w-full gap-1.5">
+        {message.attachment && (
+          <UserAttachmentPill attachment={message.attachment} />
+        )}
+        {hasText && (
+          <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-hh-orange text-white px-4 py-3 text-sm leading-relaxed shadow-md shadow-hh-orange/30">
+            {message.text}
+          </div>
+        )}
       </div>
     );
   }
+  const hasError = !!message.error;
   return (
     <div className="flex gap-3.5">
-      <span className="h-[30px] w-[30px] rounded-full bg-hh-orange text-white font-display font-extrabold text-[13px] flex items-center justify-center shrink-0 ring-[3px] ring-hh-orange/15">
-        H
+      <span
+        className={cn(
+          "h-[30px] w-[30px] rounded-full font-display font-extrabold text-[13px] flex items-center justify-center shrink-0 ring-[3px]",
+          hasError
+            ? "bg-red-100 text-hh-danger ring-hh-danger/15"
+            : "bg-hh-orange text-white ring-hh-orange/15",
+        )}
+      >
+        {hasError ? "!" : "H"}
       </span>
       <div className="flex-1 min-w-0">
         {(() => {
@@ -90,18 +108,45 @@ function Turn({ message }: { message: ChatMessageView }) {
           );
         })()}
         {message.tool && <ToolIndicator name={message.tool} />}
-        {message.learned && (
+        {message.error && <AgentErrorCard error={message.error} />}
+        {message.learned && !hasError && (
           <span className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-b from-hh-orange-light to-white border border-hh-orange-light text-[11px] font-semibold text-hh-orange-dark">
             <Sparkles className="h-3 w-3" />
             Learned: {message.learned}
           </span>
         )}
-        {message.order && (
+        {message.order && !hasError && (
           <OrderSummaryCard
             messageId={message.id}
             initialOrder={message.order}
           />
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Inline error card for agent turns that couldn't complete. Shows a friendly
+ * title + detail; never the raw SDK error string. Lives inside the agent
+ * bubble — same column as a normal reply, so layout doesn't shift.
+ */
+function AgentErrorCard({ error }: { error: ChatErrorInfo }) {
+  return (
+    <div
+      role="alert"
+      className="mt-2 max-w-[680px] rounded-2xl border border-hh-danger/30 bg-red-50/80 px-4 py-3"
+    >
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="h-4 w-4 text-hh-danger shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="text-[13.5px] font-bold text-hh-danger leading-snug">
+            {error.title}
+          </div>
+          <div className="text-[13px] text-hh-charcoal/85 mt-1 leading-relaxed">
+            {error.detail}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -145,6 +190,38 @@ function prepareAgentText(text: string): {
   visible = visible.replace(/\n{3,}/g, "\n\n");
 
   return { visible, buildingOrder };
+}
+
+function UserAttachmentPill({
+  attachment,
+}: {
+  attachment: ChatAttachmentMeta;
+}) {
+  const kind = classifyAttachment(attachment.mime_type, attachment.filename);
+  const isSheet = kind === "xls" || kind === "xlsx" || kind === "csv";
+  const Icon = isSheet ? FileSpreadsheet : FileText;
+  const tone = isSheet ? "text-emerald-600" : "text-hh-orange-dark";
+  return (
+    <div className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white border border-hh-gray-light shadow-sm max-w-[80%]">
+      <span
+        className={cn(
+          "inline-flex items-center justify-center h-8 w-8 rounded-lg bg-hh-cream border border-hh-gray-light shrink-0",
+          tone,
+        )}
+      >
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-semibold text-hh-charcoal truncate max-w-[240px]">
+          {attachment.filename}
+        </div>
+        <div className="text-[10.5px] text-hh-gray tabular">
+          {formatBytes(attachment.size_bytes)} ·{" "}
+          {kind ? kind.toUpperCase() : "FILE"}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function OrderBuildingPill() {

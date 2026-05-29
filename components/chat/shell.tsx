@@ -13,6 +13,11 @@ import { HuddleModal } from "@/components/chat/huddle-modal";
 import { OverviewDrawer } from "@/components/chat/overview-drawer";
 import { CHAT_MODES } from "@/lib/chat/modes";
 import { streamChat } from "@/lib/chat/stream";
+import {
+  categorizeClientError,
+  describeChatError,
+  isAbortError,
+} from "@/lib/chat/errors";
 import type { ChatMode } from "@/types/domain";
 import type {
   ChatMessageView,
@@ -155,7 +160,7 @@ export function ChatShell(props: ChatShellProps) {
   };
 
   // ─── Send: stream Anthropic via /api/chat ─────────────────────────────
-  const onSend = async (text: string) => {
+  const onSend = async (text: string, file: File | null = null) => {
     if (streaming) return;
     setError(null);
 
@@ -169,6 +174,13 @@ export function ChatShell(props: ChatShellProps) {
         role: "user",
         text,
         mode_at_send: sentMode,
+        attachment: file
+          ? {
+              filename: file.name,
+              mime_type: file.type || "application/octet-stream",
+              size_bytes: file.size,
+            }
+          : undefined,
         created_at: new Date().toISOString(),
       },
       {
@@ -191,7 +203,7 @@ export function ChatShell(props: ChatShellProps) {
 
     try {
       for await (const ev of streamChat(
-        { chatId: activeChat?.id ?? null, text, mode: sentMode },
+        { chatId: activeChat?.id ?? null, text, mode: sentMode, file },
         ctrl.signal,
       )) {
         if (ev.type === "start") {
@@ -246,18 +258,47 @@ export function ChatShell(props: ChatShellProps) {
             ),
           );
         } else if (ev.type === "error") {
-          throw new Error(ev.message);
+          const info = describeChatError(ev.code);
+          // If the server persisted an error row, adopt its id + chat id
+          // so navigation / refresh stays consistent with DB state.
+          if (ev.agentMessageId) {
+            agentRowId = ev.agentMessageId;
+          }
+          if (ev.chatId) {
+            resolvedChatId = ev.chatId;
+          }
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? {
+                    ...msg,
+                    id: ev.agentMessageId ?? msg.id,
+                    text: assembled,
+                    error: info,
+                    tool: null,
+                  }
+                : msg,
+            ),
+          );
+          break;
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Send failed";
-      // AbortError fires when the user navigates away — silent
-      if (msg !== "AbortError" && !msg.toLowerCase().includes("abort")) {
-        setError(msg);
-      }
-      // If we never got a 'done', drop the empty optimistic agent bubble
-      if (!agentRowId) {
-        setMessages((m) => m.filter((msg) => msg.id !== optimisticAgentId));
+      if (isAbortError(err)) {
+        // User-initiated cancel — drop the empty agent bubble silently.
+        if (!agentRowId) {
+          setMessages((m) => m.filter((msg) => msg.id !== optimisticAgentId));
+        }
+      } else {
+        const code = categorizeClientError(err) ?? "unknown";
+        const info = describeChatError(code);
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === optimisticAgentId
+              ? { ...msg, text: assembled, error: info, tool: null }
+              : msg,
+          ),
+        );
       }
     } finally {
       setStreaming(false);
@@ -270,7 +311,9 @@ export function ChatShell(props: ChatShellProps) {
       abortRef.current = null;
     }
 
-    // After a successful turn, sync the URL + sidebar order.
+    // Sync URL + sidebar after every completed turn — success OR persisted
+    // error. The DB now holds the error row, so a refresh re-renders the
+    // same error card we showed optimistically.
     if (agentRowId) {
       if (isNewChat && resolvedChatId) {
         router.push(`/dashboard?chat=${resolvedChatId}`);
@@ -408,6 +451,13 @@ export function ChatShell(props: ChatShellProps) {
         {error && (
           <div className="mx-7 mb-2 rounded-xl border border-hh-danger/40 bg-red-50 px-3 py-2 text-sm text-hh-danger shrink-0">
             {error}
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="ml-2 underline hover:no-underline"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 

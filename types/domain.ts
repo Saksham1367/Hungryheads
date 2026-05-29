@@ -28,7 +28,20 @@ export type ChatMessageRole = "user" | "agent" | "system";
 export type ChatMessagePayload =
   | { type: "order_summary"; data: OrderSummaryPayload }
   | { type: "memory_learned"; fact: string }
-  | { type: "huddle_decision"; sessionId: string };
+  | { type: "huddle_decision"; sessionId: string }
+  | { type: "error"; error: ChatTurnErrorPayload };
+
+/**
+ * Persisted shape for a failed agent turn. Mirrors {@link ChatErrorInfo} in
+ * `lib/chat/errors.ts` but lives in `types/domain.ts` so the DB layer can
+ * import it without dragging in client-side helpers.
+ */
+export interface ChatTurnErrorPayload {
+  code: string;
+  title: string;
+  detail: string;
+  retryable: boolean;
+}
 
 export interface OrderSummaryPayload {
   restaurant_name: string;

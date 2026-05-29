@@ -263,6 +263,7 @@ export type Database = {
           payload: Json | null;
           tool_calls: Json | null;
           learned_fact: string | null;
+          attachment: Json | null;
           created_at: string;
         };
         Insert: {
@@ -274,6 +275,7 @@ export type Database = {
           payload?: Json | null;
           tool_calls?: Json | null;
           learned_fact?: string | null;
+          attachment?: Json | null;
           created_at?: string;
         };
         Update: {
@@ -285,6 +287,7 @@ export type Database = {
           payload?: Json | null;
           tool_calls?: Json | null;
           learned_fact?: string | null;
+          attachment?: Json | null;
           created_at?: string;
         };
         Relationships: [
