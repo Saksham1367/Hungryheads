@@ -1,11 +1,12 @@
 /**
  * Attachment constants + server-side text extraction for chat file uploads.
  *
- * The composer lets the user attach one document per message (PDF, DOC/DOCX,
- * XLS/XLSX, CSV). PDFs are sent natively to Claude via a `document` content
- * block. The other formats are extracted to text server-side and prefixed
- * into the user's message inside <attachment> tags so the model knows what
- * it's reading.
+ * The composer lets the user attach one file per message:
+ *   - Images (JPEG/PNG/GIF/WebP) → sent natively to Claude as an `image` block
+ *     (vision). Great for menu photos, screenshots, food pics.
+ *   - PDFs → sent natively as a `document` block.
+ *   - DOC/DOCX/XLS/XLSX/CSV → extracted to text server-side and prefixed into
+ *     the user's message inside <attachment> tags.
  */
 
 /** Hard cap on a single uploaded file. Matches what the composer enforces. */
@@ -13,6 +14,14 @@ export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
 
 /** Cap on extracted text injected into the prompt — keeps tokens bounded. */
 export const MAX_EXTRACTED_CHARS = 50_000;
+
+/** Image MIME types Claude vision accepts. */
+export const ACCEPTED_IMAGE_MIME_TYPES = new Set<string>([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
 
 /** MIME types accepted by /api/chat. Anything else returns 415. */
 export const ACCEPTED_MIME_TYPES = new Set<string>([
@@ -23,18 +32,39 @@ export const ACCEPTED_MIME_TYPES = new Set<string>([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
   "text/csv",
   "application/csv",
+  ...ACCEPTED_IMAGE_MIME_TYPES,
 ]);
 
 /** Human-friendly extension allowlist — used to label the `<input accept>`. */
-export const ACCEPTED_EXTENSIONS = ".pdf,.doc,.docx,.xls,.xlsx,.csv";
+export const ACCEPTED_EXTENSIONS =
+  ".pdf,.doc,.docx,.xls,.xlsx,.csv,.jpg,.jpeg,.png,.gif,.webp";
 
-export type AttachmentKind = "pdf" | "doc" | "docx" | "xls" | "xlsx" | "csv";
+export type ImageMediaType =
+  | "image/jpeg"
+  | "image/png"
+  | "image/gif"
+  | "image/webp";
+
+export type AttachmentKind =
+  | "pdf"
+  | "doc"
+  | "docx"
+  | "xls"
+  | "xlsx"
+  | "csv"
+  | "image";
 
 export function classifyAttachment(
   mimeType: string,
   filename: string,
 ): AttachmentKind | null {
   const lower = filename.toLowerCase();
+  if (
+    ACCEPTED_IMAGE_MIME_TYPES.has(mimeType) ||
+    /\.(jpe?g|png|gif|webp)$/i.test(lower)
+  ) {
+    return "image";
+  }
   if (mimeType === "application/pdf" || lower.endsWith(".pdf")) return "pdf";
   if (
     mimeType ===
@@ -61,6 +91,27 @@ export function classifyAttachment(
   ) {
     return "csv";
   }
+  return null;
+}
+
+/**
+ * Map an uploaded image's MIME / filename to a Claude-accepted media type.
+ * Returns null if it isn't a supported image. Falls back to extension when the
+ * browser-reported MIME is missing/odd.
+ */
+export function imageMediaType(
+  mimeType: string,
+  filename: string,
+): ImageMediaType | null {
+  if (mimeType === "image/jpeg") return "image/jpeg";
+  if (mimeType === "image/png") return "image/png";
+  if (mimeType === "image/gif") return "image/gif";
+  if (mimeType === "image/webp") return "image/webp";
+  const lower = filename.toLowerCase();
+  if (/\.jpe?g$/i.test(lower)) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
   return null;
 }
 

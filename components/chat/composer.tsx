@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileSpreadsheet, FileText, Paperclip, Send, X } from "lucide-react";
+import {
+  FileSpreadsheet,
+  FileText,
+  ImageIcon,
+  Paperclip,
+  Send,
+  Square,
+  X,
+} from "lucide-react";
 import type { ChatMode } from "@/types/domain";
 import { CHAT_MODES } from "@/lib/chat/modes";
 import {
@@ -16,10 +24,16 @@ export function Composer({
   mode,
   onSend,
   disabled,
+  streaming,
+  onStop,
 }: {
   mode: ChatMode;
   onSend: (text: string, file: File | null) => void;
   disabled?: boolean;
+  /** True while a reply is streaming — swaps Send for a Stop button. */
+  streaming?: boolean;
+  /** Abort the in-flight stream. */
+  onStop?: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -61,7 +75,7 @@ export function Composer({
     const kind = classifyAttachment(f.type, f.name);
     if (!kind) {
       setFileError(
-        "Unsupported file type. Allowed: PDF, DOC, DOCX, XLS, XLSX, CSV.",
+        "Unsupported file type. Allowed: images (JPG, PNG, GIF, WebP), PDF, DOC, DOCX, XLS, XLSX, CSV.",
       );
       e.target.value = "";
       return;
@@ -122,22 +136,34 @@ export function Composer({
                 tabIndex={-1}
               />
               <ToolButton
-                title="Attach a document (PDF, DOC, DOCX, XLS, XLSX, CSV — max 5 MB)"
+                title="Attach an image or document (JPG, PNG, GIF, WebP, PDF, DOC, DOCX, XLS, XLSX, CSV — max 5 MB)"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={disabled}
               >
                 <Paperclip className="h-4 w-4" />
               </ToolButton>
             </div>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={!canSend}
-              className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-hh-orange text-white hover:bg-hh-orange-dark disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-semibold transition-colors"
-            >
-              Send
-              <Send className="h-3.5 w-3.5" />
-            </button>
+            {streaming ? (
+              <button
+                type="button"
+                onClick={onStop}
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-hh-black text-white hover:bg-hh-charcoal text-[13px] font-semibold transition-colors"
+                aria-label="Stop generating"
+              >
+                Stop
+                <Square className="h-3 w-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={submit}
+                disabled={!canSend}
+                className="inline-flex items-center gap-1.5 h-9 px-3.5 rounded-full bg-hh-orange text-white hover:bg-hh-orange-dark disabled:opacity-50 disabled:cursor-not-allowed text-[13px] font-semibold transition-colors"
+              >
+                Send
+                <Send className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -173,25 +199,53 @@ function AttachmentChip({
   onRemove: () => void;
 }) {
   const kind = classifyAttachment(file.type, file.name);
+  const isImage = kind === "image";
   const isSheet = kind === "xls" || kind === "xlsx" || kind === "csv";
-  const Icon = isSheet ? FileSpreadsheet : FileText;
-  const tone = isSheet ? "text-emerald-600" : "text-hh-orange-dark";
+  const Icon = isImage ? ImageIcon : isSheet ? FileSpreadsheet : FileText;
+  const tone = isImage
+    ? "text-violet-600"
+    : isSheet
+      ? "text-emerald-600"
+      : "text-hh-orange-dark";
+
+  // Image preview via an object URL, revoked on unmount / file change.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isImage) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file, isImage]);
+
   return (
     <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-hh-cream border border-hh-gray-light max-w-fit">
-      <span
-        className={cn(
-          "inline-flex items-center justify-center h-8 w-8 rounded-lg bg-white border border-hh-gray-light shrink-0",
-          tone,
-        )}
-      >
-        <Icon className="h-4 w-4" />
-      </span>
+      {isImage && previewUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={previewUrl}
+          alt={file.name}
+          className="h-10 w-10 rounded-lg object-cover border border-hh-gray-light shrink-0"
+        />
+      ) : (
+        <span
+          className={cn(
+            "inline-flex items-center justify-center h-8 w-8 rounded-lg bg-white border border-hh-gray-light shrink-0",
+            tone,
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </span>
+      )}
       <div className="min-w-0 max-w-[260px]">
         <div className="text-[12.5px] font-semibold text-hh-charcoal truncate">
           {file.name}
         </div>
         <div className="text-[10.5px] text-hh-gray tabular">
-          {formatBytes(file.size)} · {kind?.toUpperCase() ?? "FILE"}
+          {formatBytes(file.size)} ·{" "}
+          {isImage ? "IMAGE" : (kind?.toUpperCase() ?? "FILE")}
         </div>
       </div>
       <button

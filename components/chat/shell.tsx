@@ -159,6 +159,173 @@ export function ChatShell(props: ChatShellProps) {
     }
   };
 
+  // ─── Shared stream consumer ───────────────────────────────────────────
+  // Drives one streamChat() call against a freshly-inserted optimistic agent
+  // bubble. Used by both onSend (new message) and onRegenerate (replay last).
+  const runStream = async (
+    streamInput: {
+      chatId: string | null;
+      text: string;
+      mode: ChatMode;
+      file?: File | null;
+      regenerate?: boolean;
+      editMessageId?: string | null;
+    },
+    optimisticAgentId: string,
+    optimisticUserId: string | null,
+  ) => {
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setStreaming(true);
+
+    let resolvedChatId = activeChat?.id ?? null;
+    let isNewChat = false;
+    let assembled = "";
+    let agentRowId: string | null = null;
+    let stopped = false;
+
+    try {
+      for await (const ev of streamChat(streamInput, ctrl.signal)) {
+        if (ev.type === "start") {
+          resolvedChatId = ev.chatId;
+          isNewChat = ev.isNewChat;
+          if (optimisticUserId) {
+            setMessages((m) =>
+              m.map((msg) =>
+                msg.id === optimisticUserId
+                  ? { ...msg, id: ev.userMessageId }
+                  : msg,
+              ),
+            );
+          }
+        } else if (ev.type === "delta") {
+          assembled += ev.text;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? { ...msg, text: assembled, tool: null }
+                : msg,
+            ),
+          );
+        } else if (ev.type === "tool_start") {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId ? { ...msg, tool: ev.name } : msg,
+            ),
+          );
+        } else if (ev.type === "tool_end") {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId ? { ...msg, tool: null } : msg,
+            ),
+          );
+        } else if (ev.type === "memory_saved") {
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? { ...msg, learned: ev.fact }
+                : msg,
+            ),
+          );
+        } else if (ev.type === "allergy_saved") {
+          const note =
+            ev.action === "remove"
+              ? `Removed ${ev.allergen} from SafePlate`
+              : `SafePlate now blocks ${ev.allergen}`;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? { ...msg, safeplateNote: note }
+                : msg,
+            ),
+          );
+        } else if (ev.type === "done") {
+          agentRowId = ev.agentMessageId;
+          assembled = ev.content;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? {
+                    ...msg,
+                    id: ev.agentMessageId,
+                    text: ev.content,
+                    order: ev.order ?? undefined,
+                    learned: ev.learned ?? undefined,
+                    tool: null,
+                    payload: ev.order
+                      ? { type: "order_summary", data: ev.order }
+                      : undefined,
+                  }
+                : msg,
+            ),
+          );
+        } else if (ev.type === "error") {
+          const info = describeChatError(ev.code);
+          if (ev.agentMessageId) agentRowId = ev.agentMessageId;
+          if (ev.chatId) resolvedChatId = ev.chatId;
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === optimisticAgentId
+                ? {
+                    ...msg,
+                    id: ev.agentMessageId ?? msg.id,
+                    text: assembled,
+                    error: info,
+                    tool: null,
+                  }
+                : msg,
+            ),
+          );
+          break;
+        }
+      }
+    } catch (err) {
+      if (isAbortError(err)) {
+        // User hit Stop. Keep any partial text that already streamed in; just
+        // drop the loading indicator. If nothing arrived yet, remove the empty
+        // bubble so we don't leave a blank agent turn.
+        stopped = true;
+        setMessages((m) =>
+          assembled
+            ? m.map((msg) =>
+                msg.id === optimisticAgentId
+                  ? { ...msg, text: assembled, tool: null }
+                  : msg,
+              )
+            : m.filter((msg) => msg.id !== optimisticAgentId),
+        );
+      } else {
+        const code = categorizeClientError(err) ?? "unknown";
+        const info = describeChatError(code);
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === optimisticAgentId
+              ? { ...msg, text: assembled, error: info, tool: null }
+              : msg,
+          ),
+        );
+      }
+    } finally {
+      setStreaming(false);
+      setMessages((m) =>
+        m.map((msg) =>
+          msg.id === optimisticAgentId ? { ...msg, tool: null } : msg,
+        ),
+      );
+      abortRef.current = null;
+    }
+
+    // Sync URL + sidebar after a completed turn (success or persisted error).
+    // Skip on Stop — the partial bubble is local-only, a refresh would wipe it.
+    if (agentRowId && !stopped) {
+      if (isNewChat && resolvedChatId) {
+        router.push(`/dashboard?chat=${resolvedChatId}`);
+      } else {
+        router.refresh();
+      }
+    }
+  };
+
   // ─── Send: stream Anthropic via /api/chat ─────────────────────────────
   const onSend = async (text: string, file: File | null = null) => {
     if (streaming) return;
@@ -192,135 +359,87 @@ export function ChatShell(props: ChatShellProps) {
       },
     ]);
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-    setStreaming(true);
+    await runStream(
+      { chatId: activeChat?.id ?? null, text, mode: sentMode, file },
+      optimisticAgentId,
+      optimisticUserId,
+    );
+  };
 
-    let resolvedChatId = activeChat?.id ?? null;
-    let isNewChat = false;
-    let assembled = "";
-    let agentRowId: string | null = null;
+  // ─── Stop: abort the in-flight stream ─────────────────────────────────
+  const onStop = () => {
+    abortRef.current?.abort();
+  };
 
-    try {
-      for await (const ev of streamChat(
-        { chatId: activeChat?.id ?? null, text, mode: sentMode, file },
-        ctrl.signal,
-      )) {
-        if (ev.type === "start") {
-          resolvedChatId = ev.chatId;
-          isNewChat = ev.isNewChat;
-          // Replace optimistic user msg id with the real one
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === optimisticUserId
-                ? { ...msg, id: ev.userMessageId }
-                : msg,
-            ),
-          );
-        } else if (ev.type === "delta") {
-          assembled += ev.text;
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === optimisticAgentId
-                ? { ...msg, text: assembled, tool: null }
-                : msg,
-            ),
-          );
-        } else if (ev.type === "tool_start") {
-          // Stamp the tool name on the streaming agent bubble. Clears when
-          // the next text delta arrives (or on done/error). Mock tools
-          // finish in <10ms, so we DON'T clear on tool_end — the pill needs
-          // to remain through the gap until Claude resumes streaming text.
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === optimisticAgentId ? { ...msg, tool: ev.name } : msg,
-            ),
-          );
-        } else if (ev.type === "tool_end") {
-          // No-op — tool_start → next delta is what controls visibility.
-        } else if (ev.type === "done") {
-          agentRowId = ev.agentMessageId;
-          assembled = ev.content;
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === optimisticAgentId
-                ? {
-                    ...msg,
-                    id: ev.agentMessageId,
-                    text: ev.content,
-                    order: ev.order ?? undefined,
-                    learned: ev.learned ?? undefined,
-                    payload: ev.order
-                      ? { type: "order_summary", data: ev.order }
-                      : undefined,
-                  }
-                : msg,
-            ),
-          );
-        } else if (ev.type === "error") {
-          const info = describeChatError(ev.code);
-          // If the server persisted an error row, adopt its id + chat id
-          // so navigation / refresh stays consistent with DB state.
-          if (ev.agentMessageId) {
-            agentRowId = ev.agentMessageId;
-          }
-          if (ev.chatId) {
-            resolvedChatId = ev.chatId;
-          }
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === optimisticAgentId
-                ? {
-                    ...msg,
-                    id: ev.agentMessageId ?? msg.id,
-                    text: assembled,
-                    error: info,
-                    tool: null,
-                  }
-                : msg,
-            ),
-          );
-          break;
-        }
+  // ─── Regenerate: replay the last user turn, replacing the agent reply ──
+  const onRegenerate = async () => {
+    if (streaming) return;
+    const chatId = activeChat?.id;
+    if (!chatId) return;
+    setError(null);
+
+    // Drop the trailing agent message(s) locally and add a fresh empty bubble.
+    // The server deletes the same rows and re-streams from the last user turn.
+    const optimisticAgentId = `local-agent-${Date.now()}`;
+    setMessages((m) => {
+      const trimmed = [...m];
+      while (trimmed.length && trimmed[trimmed.length - 1].role === "agent") {
+        trimmed.pop();
       }
-    } catch (err) {
-      if (isAbortError(err)) {
-        // User-initiated cancel — drop the empty agent bubble silently.
-        if (!agentRowId) {
-          setMessages((m) => m.filter((msg) => msg.id !== optimisticAgentId));
-        }
-      } else {
-        const code = categorizeClientError(err) ?? "unknown";
-        const info = describeChatError(code);
-        setMessages((m) =>
-          m.map((msg) =>
-            msg.id === optimisticAgentId
-              ? { ...msg, text: assembled, error: info, tool: null }
-              : msg,
-          ),
-        );
-      }
-    } finally {
-      setStreaming(false);
-      // Clear any lingering tool indicator on the optimistic agent bubble.
-      setMessages((m) =>
-        m.map((msg) =>
-          msg.id === optimisticAgentId ? { ...msg, tool: null } : msg,
-        ),
+      return [
+        ...trimmed,
+        {
+          id: optimisticAgentId,
+          role: "agent",
+          text: "",
+          mode_at_send: mode,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
+
+    await runStream(
+      { chatId, text: "", mode, regenerate: true },
+      optimisticAgentId,
+      null,
+    );
+  };
+
+  // ─── Edit & resend: rewrite a user message, re-fork from there ─────────
+  const onEditMessage = async (messageId: string, newText: string) => {
+    if (streaming) return;
+    const chatId = activeChat?.id;
+    if (!chatId) return;
+    const trimmedText = newText.trim();
+    if (!trimmedText) return;
+    setError(null);
+
+    // Locally: update the edited bubble, drop everything after it, append a
+    // fresh empty agent bubble. The server mirrors this and re-streams.
+    const optimisticAgentId = `local-agent-${Date.now()}`;
+    setMessages((m) => {
+      const idx = m.findIndex((msg) => msg.id === messageId);
+      if (idx === -1) return m;
+      const kept = m.slice(0, idx + 1).map((msg) =>
+        msg.id === messageId ? { ...msg, text: trimmedText } : msg,
       );
-      abortRef.current = null;
-    }
+      return [
+        ...kept,
+        {
+          id: optimisticAgentId,
+          role: "agent",
+          text: "",
+          mode_at_send: mode,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
 
-    // Sync URL + sidebar after every completed turn — success OR persisted
-    // error. The DB now holds the error row, so a refresh re-renders the
-    // same error card we showed optimistically.
-    if (agentRowId) {
-      if (isNewChat && resolvedChatId) {
-        router.push(`/dashboard?chat=${resolvedChatId}`);
-      } else {
-        router.refresh();
-      }
-    }
+    await runStream(
+      { chatId, text: trimmedText, mode, editMessageId: messageId },
+      optimisticAgentId,
+      null,
+    );
   };
 
   // Wrap every sidebar interaction so picking/creating a chat also closes
@@ -445,6 +564,9 @@ export function ChatShell(props: ChatShellProps) {
             hasMore={hasMore}
             loadingMore={loadingMore}
             onLoadMore={onLoadMore}
+            streaming={streaming}
+            onRegenerate={onRegenerate}
+            onEditMessage={onEditMessage}
           />
         )}
 
@@ -463,7 +585,13 @@ export function ChatShell(props: ChatShellProps) {
 
         <div className="shrink-0">
           {!isEmpty && <ChatSuggestions mode={mode} onPick={onSend} />}
-          <Composer mode={mode} onSend={onSend} disabled={streaming} />
+          <Composer
+            mode={mode}
+            onSend={onSend}
+            disabled={streaming}
+            streaming={streaming}
+            onStop={onStop}
+          />
         </div>
       </main>
 

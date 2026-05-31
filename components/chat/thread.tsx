@@ -1,13 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   AlertTriangle,
   Check,
   ChevronUp,
   FileSpreadsheet,
   FileText,
+  ImageIcon,
   Loader2,
+  Pencil,
+  RotateCcw,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -30,14 +34,56 @@ export function ChatThread({
   hasMore = false,
   loadingMore = false,
   onLoadMore,
+  streaming = false,
+  onRegenerate,
+  onEditMessage,
 }: {
   messages: ChatMessageView[];
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
+  streaming?: boolean;
+  onRegenerate?: () => void;
+  onEditMessage?: (messageId: string, newText: string) => void;
 }) {
+  // The last agent message is the only one that can be regenerated.
+  const lastAgentId = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "agent") return messages[i].id;
+    }
+    return null;
+  })();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
+  // True while the user is parked near the bottom — only then do we auto-follow
+  // new content. If they scroll up to read history, we leave them alone.
+  const stickToBottom = useRef(true);
+
+  // Track the latest streamed text length so the effect re-runs as tokens
+  // arrive (not just when a message is added/removed).
+  const lastText = messages[messages.length - 1]?.text ?? "";
+
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = distanceFromBottom < 120;
+  };
+
+  useEffect(() => {
+    if (!stickToBottom.current) return;
+    // Jump to the sentinel at the very bottom. "auto" (not "smooth") so it
+    // keeps pace with fast token streaming without lagging behind.
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages.length, lastText]);
+
   return (
-    <div className="flex-1 overflow-y-auto py-8">
+    <div
+      ref={scrollRef}
+      onScroll={onScroll}
+      className="flex-1 overflow-y-auto py-8"
+    >
       <div className="max-w-[780px] mx-auto px-7 flex flex-col gap-7">
         {hasMore && onLoadMore && (
           <div className="flex justify-center">
@@ -57,30 +103,191 @@ export function ChatThread({
           </div>
         )}
         {messages.map((m) => (
-          <Turn key={m.id} message={m} />
+          <Turn
+            key={m.id}
+            message={m}
+            canRegenerate={
+              m.id === lastAgentId && !streaming && !!onRegenerate
+            }
+            onRegenerate={onRegenerate}
+            // Editing only applies to real (persisted) user messages — skip the
+            // optimistic `local-*` ids that haven't hit the DB yet, and disable
+            // while a reply is streaming.
+            canEdit={
+              m.role === "user" &&
+              !streaming &&
+              !!onEditMessage &&
+              !m.id.startsWith("local-")
+            }
+            onEditMessage={onEditMessage}
+            // The active streaming agent bubble shows a "Thinking…" indicator
+            // whenever there's a processing gap with nothing else on screen.
+            isStreamingTurn={streaming && m.id === lastAgentId}
+          />
         ))}
+        {/* Scroll sentinel — auto-scroll targets this so the newest content
+            stays in view as the agent streams. */}
+        <div ref={endRef} aria-hidden className="h-0" />
       </div>
     </div>
   );
 }
 
-function Turn({ message }: { message: ChatMessageView }) {
-  if (message.role === "user") {
-    const hasText = message.text.trim().length > 0;
+/**
+ * A user turn — file pill (if any) + the message bubble. Hovering reveals an
+ * Edit button; clicking it swaps the bubble for an inline textarea with
+ * Save / Cancel. Saving re-forks the conversation from this message.
+ */
+function UserTurn({
+  message,
+  canEdit,
+  onEditMessage,
+}: {
+  message: ChatMessageView;
+  canEdit: boolean;
+  onEditMessage?: (messageId: string, newText: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.text);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const hasText = message.text.trim().length > 0;
+
+  const startEdit = () => {
+    setDraft(message.text);
+    setEditing(true);
+  };
+  const cancel = () => {
+    setEditing(false);
+    setDraft(message.text);
+  };
+  const save = () => {
+    const t = draft.trim();
+    if (!t || t === message.text.trim()) {
+      cancel();
+      return;
+    }
+    setEditing(false);
+    onEditMessage?.(message.id, t);
+  };
+
+  // Focus + grow the textarea when the editor opens.
+  useEffect(() => {
+    if (!editing) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [editing]);
+
+  if (editing) {
     return (
       <div className="flex flex-col items-end w-full gap-1.5">
-        {message.attachment && (
-          <UserAttachmentPill attachment={message.attachment} />
-        )}
-        {hasText && (
-          <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-hh-orange text-white px-4 py-3 text-sm leading-relaxed shadow-md shadow-hh-orange/30">
-            {message.text}
+        <div className="w-full max-w-[80%] rounded-2xl rounded-br-sm bg-white border border-hh-orange shadow-md shadow-hh-orange/20 p-2.5">
+          <textarea
+            ref={taRef}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              e.target.style.height = "auto";
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                save();
+              }
+              if (e.key === "Escape") cancel();
+            }}
+            rows={1}
+            className="w-full resize-none border-none outline-none bg-transparent text-sm text-hh-black leading-relaxed max-h-[200px]"
+          />
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={cancel}
+              className="px-3 py-1 rounded-lg text-[12px] font-semibold text-hh-charcoal hover:bg-hh-cream"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={!draft.trim()}
+              className="px-3 py-1 rounded-lg text-[12px] font-semibold bg-hh-orange text-white hover:bg-hh-orange-dark disabled:opacity-50"
+            >
+              Save &amp; resend
+            </button>
           </div>
-        )}
+        </div>
       </div>
     );
   }
+
+  return (
+    <div className="group flex flex-col items-end w-full gap-1.5">
+      {message.attachment && (
+        <UserAttachmentPill attachment={message.attachment} />
+      )}
+      {hasText && (
+        <div className="flex items-end gap-1.5 max-w-[85%]">
+          {canEdit && (
+            <button
+              type="button"
+              onClick={startEdit}
+              aria-label="Edit message"
+              title="Edit message"
+              className="mb-1 h-7 w-7 inline-flex items-center justify-center rounded-lg text-hh-gray opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-hh-orange-dark hover:bg-hh-cream transition-all shrink-0"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <div className="rounded-2xl rounded-br-sm bg-hh-orange text-white px-4 py-3 text-sm leading-relaxed shadow-md shadow-hh-orange/30">
+            {message.text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Turn({
+  message,
+  canRegenerate = false,
+  onRegenerate,
+  canEdit = false,
+  onEditMessage,
+  isStreamingTurn = false,
+}: {
+  message: ChatMessageView;
+  canRegenerate?: boolean;
+  onRegenerate?: () => void;
+  canEdit?: boolean;
+  onEditMessage?: (messageId: string, newText: string) => void;
+  isStreamingTurn?: boolean;
+}) {
+  if (message.role === "user") {
+    return (
+      <UserTurn
+        message={message}
+        canEdit={canEdit}
+        onEditMessage={onEditMessage}
+      />
+    );
+  }
   const hasError = !!message.error;
+  // Show "Thinking…" when this is the active streaming turn and there's a
+  // processing gap: no visible prose yet, no tool pill running, no order
+  // being built, no error. Covers the dead air before the first token AND the
+  // pause between a tool finishing and the model resuming text.
+  const prepForGap = prepareAgentText(message.text);
+  const showThinking =
+    isStreamingTurn &&
+    !hasError &&
+    !message.tool &&
+    !prepForGap.visible &&
+    !prepForGap.buildingOrder;
   return (
     <div className="flex gap-3.5">
       <span
@@ -107,8 +314,22 @@ function Turn({ message }: { message: ChatMessageView }) {
             </>
           );
         })()}
+        {/* Thinking indicator — fills the processing gap (before the first
+            token, or between a tool finishing and text resuming) so the screen
+            never looks frozen. */}
+        {showThinking && <ThinkingIndicator />}
+        {/* Live tool activity — one animated pill at a time, shown BELOW the
+            prose. Same visual language as the "Building your order card…"
+            pill: it appears while a tool runs, then vanishes; the next tool's
+            pill takes its place; the last one vanishes when work is done. */}
         {message.tool && <ToolIndicator name={message.tool} />}
         {message.error && <AgentErrorCard error={message.error} />}
+        {message.safeplateNote && !hasError && (
+          <span className="mt-2.5 mr-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-50 border border-hh-success/30 text-[11px] font-semibold text-hh-success">
+            <ShieldCheck className="h-3 w-3" />
+            {message.safeplateNote}
+          </span>
+        )}
         {message.learned && !hasError && (
           <span className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-gradient-to-b from-hh-orange-light to-white border border-hh-orange-light text-[11px] font-semibold text-hh-orange-dark">
             <Sparkles className="h-3 w-3" />
@@ -120,6 +341,17 @@ function Turn({ message }: { message: ChatMessageView }) {
             messageId={message.id}
             initialOrder={message.order}
           />
+        )}
+        {canRegenerate && !message.tool && (
+          <button
+            type="button"
+            onClick={onRegenerate}
+            className="mt-2.5 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[12px] font-medium text-hh-gray hover:text-hh-orange-dark hover:bg-hh-cream transition-colors"
+            title="Regenerate this response"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {hasError ? "Try again" : "Regenerate"}
+          </button>
         )}
       </div>
     </div>
@@ -192,15 +424,48 @@ function prepareAgentText(text: string): {
   return { visible, buildingOrder };
 }
 
+/**
+ * "Thinking…" indicator shown during a processing gap (before the first token,
+ * or while the model works between tool calls). The label cycles every ~2.5s so
+ * it reads as live activity, with three pulsing dots — Claude.ai style.
+ */
+const THINKING_LABELS = ["Thinking", "Working", "Processing"] as const;
+
+function ThinkingIndicator() {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const t = setInterval(
+      () => setIdx((i) => (i + 1) % THINKING_LABELS.length),
+      2500,
+    );
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <div className="inline-flex items-center gap-1.5 text-[14px] text-hh-gray animate-fade-in">
+      <span className="font-medium">{THINKING_LABELS[idx]}</span>
+      <span className="inline-flex gap-0.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-hh-orange animate-pulse [animation-delay:0ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-hh-orange animate-pulse [animation-delay:200ms]" />
+        <span className="h-1.5 w-1.5 rounded-full bg-hh-orange animate-pulse [animation-delay:400ms]" />
+      </span>
+    </div>
+  );
+}
+
 function UserAttachmentPill({
   attachment,
 }: {
   attachment: ChatAttachmentMeta;
 }) {
   const kind = classifyAttachment(attachment.mime_type, attachment.filename);
+  const isImage = kind === "image";
   const isSheet = kind === "xls" || kind === "xlsx" || kind === "csv";
-  const Icon = isSheet ? FileSpreadsheet : FileText;
-  const tone = isSheet ? "text-emerald-600" : "text-hh-orange-dark";
+  const Icon = isImage ? ImageIcon : isSheet ? FileSpreadsheet : FileText;
+  const tone = isImage
+    ? "text-violet-600"
+    : isSheet
+      ? "text-emerald-600"
+      : "text-hh-orange-dark";
   return (
     <div className="inline-flex items-center gap-2.5 px-3 py-2 rounded-xl bg-white border border-hh-gray-light shadow-sm max-w-[80%]">
       <span
@@ -217,7 +482,7 @@ function UserAttachmentPill({
         </div>
         <div className="text-[10.5px] text-hh-gray tabular">
           {formatBytes(attachment.size_bytes)} ·{" "}
-          {kind ? kind.toUpperCase() : "FILE"}
+          {isImage ? "IMAGE" : kind ? kind.toUpperCase() : "FILE"}
         </div>
       </div>
     </div>
@@ -354,42 +619,59 @@ function RichText({ text }: { text: string }) {
 }
 
 /**
- * Inline tool indicator. Shows up in the agent's bubble while a tool is
- * running (or while we're waiting for the agent to resume streaming text
- * after a tool call). Claude.ai-style: lives inside the conversation flow,
- * not above the composer.
+ * Live tool indicator — one animated pill at a time, mirroring the
+ * "Building your order card…" pill (same size, shape, colours, spinner).
+ * Shown above the prose while a tool runs; it vanishes when the tool finishes
+ * (cleared on the next tool_start, the first text delta, or done). The next
+ * tool's pill takes its place; the last one vanishes when work is done.
  */
 function ToolIndicator({ name }: { name: string }) {
   const label = toolLabel(name);
   return (
-    <div className="inline-flex items-center gap-2.5 mt-1 mb-1 text-[13px] text-hh-charcoal animate-fade-in">
-      <span className="relative inline-flex items-center justify-center h-5 w-5">
-        <span className="absolute inline-flex h-full w-full rounded-full bg-hh-orange opacity-40 animate-ping" />
-        <span className="relative h-2 w-2 rounded-full bg-hh-orange" />
-      </span>
-      <span className="font-medium">
-        {label}
-        <span className="inline-flex gap-0.5 ml-1 align-middle">
-          <span className="h-1 w-1 rounded-full bg-hh-orange animate-pulse [animation-delay:0ms]" />
-          <span className="h-1 w-1 rounded-full bg-hh-orange animate-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-hh-orange animate-pulse [animation-delay:400ms]" />
-        </span>
-      </span>
+    <div className="mt-1 mb-2.5 inline-flex items-center gap-2 rounded-full bg-hh-orange-light/60 border border-hh-orange-light px-3 py-1.5 text-[11px] font-semibold text-hh-orange-dark animate-fade-in">
+      <Loader2 className="h-3 w-3 animate-spin" />
+      {label}…
     </div>
   );
 }
 
+/** Present-tense label for the live, animated in-progress indicator. */
 function toolLabel(name: string): string {
   switch (name) {
+    case "get_addresses":
+      return "Getting your address";
     case "search_restaurants":
       return "Searching Swiggy for restaurants";
     case "get_restaurant_menu":
       return "Reading the menu";
+    case "update_food_cart":
+      return "Updating your cart";
+    case "get_food_cart":
+      return "Checking your cart";
+    case "flush_food_cart":
+      return "Clearing your cart";
+    case "fetch_food_coupons":
+      return "Looking for coupons";
+    case "apply_food_coupon":
+      return "Applying a coupon";
+    case "place_food_order":
+      return "Placing your order";
+    case "track_food_order":
+      return "Tracking your order";
+    case "get_food_orders":
+      return "Checking your order history";
+    case "report_error":
+      return "Filing a report";
+    case "remember_preference":
+      return "Saving to memory";
+    case "update_allergy":
+      return "Updating SafePlate";
+    case "propose_order":
+      return "Building your order";
     default:
       return `Running ${name}`;
   }
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Order summary card (the YES-to-place card from the prototype)
@@ -497,7 +779,7 @@ function OrderSummaryCard({
         <TotalRow label="Delivery + GST" value={formatRupees(order.delivery_gst)} />
         {order.coupon < 0 && (
           <TotalRow
-            label="Founder coupon"
+            label="Coupon discount"
             value={`−${formatRupees(Math.abs(order.coupon))}`}
             valueClass="text-hh-success"
           />

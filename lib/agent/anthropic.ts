@@ -27,5 +27,12 @@ export function anthropicClient(): Anthropic {
 export const DEFAULT_MODEL =
   process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
 
-/** Hard limit per chat reply (Phase 1). Step 6f expands for tool use. */
-export const DEFAULT_MAX_TOKENS = 1024;
+/**
+ * Max output tokens per chat reply.
+ *
+ * Was 1024 — too low. A pitch + the trailing <order-summary> JSON could exceed
+ * it, truncating the response mid-JSON so the order card failed to parse ("works
+ * one time, fails the next"). 4096 comfortably fits a multi-paragraph reply plus
+ * the card with headroom, and Sonnet 4.6 supports far more.
+ */
+export const DEFAULT_MAX_TOKENS = 4096;

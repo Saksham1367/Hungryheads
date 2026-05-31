@@ -5,6 +5,7 @@
  * them as decoded JSON. Cancels cleanly via the AbortSignal.
  */
 import { isChatErrorCode, type ChatErrorCode } from "@/lib/chat/errors";
+import type { ToolCallRecord } from "@/lib/chat/types";
 import type { OrderSummaryPayload } from "@/types/domain";
 
 export type ChatStreamEvent =
@@ -12,6 +13,8 @@ export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "tool_start"; name: string }
   | { type: "tool_end"; name: string; ok: boolean }
+  | { type: "memory_saved"; fact: string }
+  | { type: "allergy_saved"; allergen: string; action: "add" | "remove" }
   | {
       type: "done";
       chatId: string;
@@ -23,6 +26,8 @@ export type ChatStreamEvent =
       orderParseError?: string | null;
       /** First `LEARNED: <fact>` line emitted (others persisted to agent_memory). */
       learned?: string | null;
+      /** Permanent record of tools the agent ran for this message. */
+      toolCalls?: ToolCallRecord[];
     }
   | {
       type: "error";
@@ -40,6 +45,10 @@ export async function* streamChat(
     mode: string;
     /** Optional file attachment. When set, the request is sent as multipart. */
     file?: File | null;
+    /** Regenerate the last agent reply (no new user message). JSON-only. */
+    regenerate?: boolean;
+    /** Edit & resend: id of the user message to rewrite. JSON-only. */
+    editMessageId?: string | null;
   },
   signal: AbortSignal,
 ): AsyncGenerator<ChatStreamEvent, void, void> {
@@ -60,6 +69,8 @@ export async function* streamChat(
         chatId: input.chatId,
         text: input.text,
         mode: input.mode,
+        regenerate: input.regenerate ?? false,
+        editMessageId: input.editMessageId ?? null,
       }),
       signal,
     });

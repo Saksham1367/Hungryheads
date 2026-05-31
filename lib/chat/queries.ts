@@ -17,6 +17,7 @@ import type {
   ChatMessageView,
   ChatView,
   HuddleView,
+  ToolCallRecord,
 } from "@/lib/chat/types";
 
 // ─── Chats ──────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ export async function loadChatMessages(
   const { data, error } = await supabase
     .from("chat_messages")
     .select(
-      "id, role, content, mode_at_send, payload, learned_fact, attachment, created_at",
+      "id, role, content, mode_at_send, payload, learned_fact, attachment, tool_calls, created_at",
     )
     .eq("chat_id", chatId)
     .order("created_at", { ascending: false })
@@ -104,7 +105,7 @@ export async function loadEarlierChatMessages(
   const { data, error } = await supabase
     .from("chat_messages")
     .select(
-      "id, role, content, mode_at_send, payload, learned_fact, attachment, created_at",
+      "id, role, content, mode_at_send, payload, learned_fact, attachment, tool_calls, created_at",
     )
     .eq("chat_id", chatId)
     .lt("created_at", beforeCreatedAt)
@@ -132,10 +133,12 @@ function rowToMessageView(row: {
   payload: unknown;
   learned_fact: string | null;
   attachment: unknown;
+  tool_calls: unknown;
   created_at: string;
 }): ChatMessageView {
   const payload = parsePayload(row.payload);
   const attachment = parseAttachment(row.attachment);
+  const toolCalls = parseToolCalls(row.tool_calls);
   const error =
     payload?.type === "error"
       ? describeChatError(
@@ -151,9 +154,25 @@ function rowToMessageView(row: {
     learned: row.learned_fact ?? undefined,
     payload: payload ?? undefined,
     attachment: attachment ?? undefined,
+    toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     error,
     created_at: row.created_at,
   };
+}
+
+/** Parse the `tool_calls` JSONB column into a clean record array. */
+function parseToolCalls(raw: unknown): ToolCallRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ToolCallRecord[] = [];
+  for (const item of raw) {
+    if (item && typeof item === "object" && "name" in item) {
+      const rec = item as { name?: unknown; ok?: unknown };
+      if (typeof rec.name === "string") {
+        out.push({ name: rec.name, ok: rec.ok !== false });
+      }
+    }
+  }
+  return out;
 }
 
 /**

@@ -186,6 +186,133 @@ export const AGENT_TOOLS: Anthropic.Messages.Tool[] = [
       },
     },
   },
+  {
+    // NOTE: handled directly in app/api/chat/route.ts (async Supabase write to
+    // user_allergies), NOT in the synchronous runTool dispatcher. HungryHeads-
+    // internal, not a Swiggy MCP tool.
+    name: "update_allergy",
+    description:
+      "Add or remove a food allergy / intolerance on the user's SafePlate profile. THIS IS A SAFETY ACTION — call it whenever the user states (or retracts) an allergy or a hard 'I can't eat X' intolerance, e.g. 'I'm allergic to peanuts', 'mushrooms make me sick', 'actually I'm fine with dairy now'. Saving here makes SafePlate HARD-BLOCK that ingredient at checkout — it is NOT the same as remember_preference (which is soft conversational memory). For allergies, ALWAYS use update_allergy. Call it immediately and silently, one call per allergen.",
+    input_schema: {
+      type: "object",
+      properties: {
+        allergen: {
+          type: "string",
+          description:
+            "The ingredient to block, lowercase singular where natural. Examples: 'peanuts', 'mushrooms', 'dairy', 'shellfish', 'soy'.",
+        },
+        action: {
+          type: "string",
+          enum: ["add", "remove"],
+          description:
+            "'add' when the user reveals an allergy/intolerance (default); 'remove' only when they explicitly say it no longer applies.",
+        },
+        severity: {
+          type: "string",
+          enum: ["high", "medium", "low"],
+          description:
+            "How serious. 'high' = dangerous/anaphylactic (default, hard block). 'medium' = strong intolerance (hard block). 'low' = mild dislike (note only, does NOT block). When unsure, use 'high'.",
+        },
+      },
+      required: ["allergen"],
+    },
+  },
+  {
+    // NOTE: handled directly in app/api/chat/route.ts (async Supabase write to
+    // agent_memory), NOT in the synchronous runTool dispatcher below. It is a
+    // HungryHeads-internal tool, not a Swiggy MCP tool, so it deliberately
+    // stays out of the dispatch that Step 12 swaps for the live MCP client.
+    name: "remember_preference",
+    description:
+      "Save a STABLE, long-term fact about the user so you can recall it in future conversations. Call this the moment the user reveals a durable preference or constraint — a cuisine or dish they love or hate, an allergy or dietary rule, a budget habit, a go-to restaurant, a recurring schedule. Call it immediately, without asking permission, and use one call per distinct fact. Do NOT save one-off moods ('wants pizza tonight'), and do NOT re-save something already listed in LONG-TERM MEMORY.",
+    input_schema: {
+      type: "object",
+      properties: {
+        fact: {
+          type: "string",
+          description:
+            "One short, self-contained sentence written in third person about the user. Example: 'Loves Hyderabadi biryani', 'Allergic to peanuts (severe)', 'Keeps weekday dinners under ₹300'.",
+        },
+        category: {
+          type: "string",
+          enum: [
+            "cuisine",
+            "allergy",
+            "diet",
+            "budget",
+            "place",
+            "dislike",
+            "schedule",
+            "other",
+          ],
+          description: "Rough kind of fact — helps you keep memories tidy.",
+        },
+        confidence: {
+          type: "number",
+          description:
+            "0–1 how sure you are this is stable. Explicit statements ('I'm allergic to X') are ~0.95; softer signals ('I usually go for…') are ~0.7.",
+        },
+      },
+      required: ["fact"],
+    },
+  },
+  {
+    // NOTE: handled directly in app/api/chat/route.ts. The server computes the
+    // arithmetic + enforces the ₹1000 cap from this input, then renders the
+    // order card — so a truncated reply or bad math can't produce a broken card.
+    // HungryHeads-internal, not a Swiggy MCP tool.
+    name: "propose_order",
+    description:
+      "Show the user a confirmable order card with a 'YES — place order' button. Call this ONLY when you've decided on a specific restaurant + specific items (from a real search_restaurants / get_restaurant_menu result this turn) and want the user to confirm. Supply the items and fees; the SERVER computes subtotal and total and enforces the ₹1000 cap — do NOT pre-sum them yourself. One call per reply. After calling it, write a short 1–2 sentence pitch; don't restate the line items in prose.",
+    input_schema: {
+      type: "object",
+      properties: {
+        restaurant_name: {
+          type: "string",
+          description: "Restaurant name, e.g. 'Paradise — Indiranagar'.",
+        },
+        rating: { type: "number", description: "Restaurant rating 0–5, if known." },
+        distance_km: { type: "number", description: "Distance in km, if known." },
+        eta_min: { type: "number", description: "Delivery ETA in minutes, if known." },
+        items: {
+          type: "array",
+          description: "The line items. The server multiplies price × qty.",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Dish name from the menu." },
+              qty: { type: "number", description: "Quantity (1–20)." },
+              price: {
+                type: "number",
+                description: "Per-unit price in rupees (NOT price × qty).",
+              },
+              safe: {
+                type: "boolean",
+                description:
+                  "True if allergen-safe for this user. Default true; set false only if you must surface a flagged item (SafePlate will block placement).",
+              },
+            },
+            required: ["name", "qty", "price"],
+          },
+        },
+        delivery_gst: {
+          type: "number",
+          description: "Combined delivery fee + GST in rupees. Use 0 if unknown.",
+        },
+        coupon_discount: {
+          type: "number",
+          description:
+            "Coupon discount as a POSITIVE rupee amount (e.g. 25 for −₹25). Omit or 0 if none.",
+        },
+        reasoning: {
+          type: "string",
+          description:
+            "One short line shown on the card, e.g. 'Peanut-safe, fits your ₹400 budget.'",
+        },
+      },
+      required: ["restaurant_name", "items"],
+    },
+  },
 ];
 
 // ─── Dispatcher (server-side) ───────────────────────────────────────────────
