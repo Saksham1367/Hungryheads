@@ -84,7 +84,7 @@ export function ChatThread({
       onScroll={onScroll}
       className="flex-1 overflow-y-auto py-8"
     >
-      <div className="max-w-[780px] mx-auto px-7 flex flex-col gap-7">
+      <div className="max-w-[780px] mx-auto px-4 sm:px-7 flex flex-col gap-7">
         {hasMore && onLoadMore && (
           <div className="flex justify-center">
             <button
@@ -748,25 +748,25 @@ function OrderSummaryCard({
           <div
             key={i}
             className={cn(
-              "flex justify-between items-baseline py-2 text-[13px]",
+              "flex justify-between items-baseline gap-2 py-2 text-[13px]",
               i < order.items.length - 1 && "border-b border-dashed border-hh-gray-light",
               !it.safe && "bg-red-50/40 -mx-4 px-4",
             )}
           >
-            <span className="text-hh-charcoal flex items-baseline gap-1.5 flex-wrap">
-              {it.name}
-              <span className="font-mono text-[11px] text-hh-gray">× {it.qty}</span>
+            <span className="min-w-0 text-hh-charcoal flex items-baseline gap-1.5 flex-wrap">
+              <span className="break-words">{it.name}</span>
+              <span className="font-mono text-[11px] text-hh-gray shrink-0">× {it.qty}</span>
               {it.safe ? (
-                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-success bg-emerald-50 px-1.5 py-0.5 rounded">
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-success bg-emerald-50 px-1.5 py-0.5 rounded shrink-0">
                   <Check className="h-3 w-3" /> safe
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-danger bg-red-100 px-1.5 py-0.5 rounded">
+                <span className="inline-flex items-center gap-0.5 text-[10px] font-bold uppercase tracking-wider text-hh-danger bg-red-100 px-1.5 py-0.5 rounded shrink-0">
                   <AlertTriangle className="h-3 w-3" /> flagged
                 </span>
               )}
             </span>
-            <span className="tabular text-hh-black font-semibold">
+            <span className="tabular text-hh-black font-semibold shrink-0">
               {formatRupees(it.price)}
             </span>
           </div>
@@ -828,7 +828,9 @@ function OrderSummaryCard({
               {error}
             </div>
           )}
-          <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-4 py-3 border-t border-hh-gray-light">
+          {/* Mobile: primary button full-width on top, Edit/Swap split below.
+              sm+: single inline row [primary | Edit | Swap]. */}
+          <div className="flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto] gap-2 px-4 py-3 border-t border-hh-gray-light">
             <button
               type="button"
               onClick={onPlace}
@@ -842,22 +844,24 @@ function OrderSummaryCard({
               )}
               {isPending ? "Placing…" : "YES — place order"}
             </button>
-            <button
-              type="button"
-              disabled
-              title="Edit — Phase 2"
-              className="rounded-xl bg-white border border-hh-gray-light px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
-            >
-              Edit
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Swap — Phase 2"
-              className="rounded-xl bg-white border border-hh-gray-light px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
-            >
-              Swap
-            </button>
+            <div className="grid grid-cols-2 gap-2 sm:contents">
+              <button
+                type="button"
+                disabled
+                title="Edit — Phase 2"
+                className="rounded-xl bg-white border border-hh-gray-light py-2.5 sm:py-0 px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                disabled
+                title="Swap — Phase 2"
+                className="rounded-xl bg-white border border-hh-gray-light py-2.5 sm:py-0 px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
+              >
+                Swap
+              </button>
+            </div>
           </div>
         </>
       )}

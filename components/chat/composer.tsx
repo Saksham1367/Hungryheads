@@ -92,7 +92,7 @@ export function Composer({
   const canSend = (draft.trim().length > 0 || file !== null) && !disabled;
 
   return (
-    <div className="px-7 pb-5 pt-3.5 bg-gradient-to-b from-transparent via-hh-cream/70 to-hh-cream relative">
+    <div className="px-4 sm:px-7 pb-5 pt-3.5 bg-gradient-to-b from-transparent via-hh-cream/70 to-hh-cream relative">
       <div className="max-w-[780px] mx-auto">
         <div
           className={cn(

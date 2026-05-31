@@ -505,26 +505,28 @@ export function ChatShell(props: ChatShellProps) {
       </div>
 
       <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full">
-        <header className="px-4 md:px-6 py-3 border-b border-hh-gray-light bg-hh-cream/80 backdrop-blur-md flex items-center justify-between gap-3 md:gap-4 shrink-0">
+        <header className="px-3 sm:px-4 md:px-6 py-3 border-b border-hh-gray-light bg-hh-cream/80 backdrop-blur-md flex items-center justify-between gap-2 sm:gap-3 md:gap-4 shrink-0">
           <button
             type="button"
             aria-label="Open sidebar"
             onClick={() => setSidebarOpen(true)}
-            className="md:hidden p-2 -ml-2 text-hh-charcoal rounded-lg hover:bg-hh-orange-light"
+            className="md:hidden p-2 -ml-2 text-hh-charcoal rounded-lg hover:bg-hh-orange-light shrink-0"
           >
             <Menu className="h-5 w-5" />
           </button>
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-base font-bold tracking-tight text-hh-black truncate">
+            <h1 className="font-display text-sm sm:text-base font-bold tracking-tight text-hh-black truncate">
               {activeChat?.title ?? "New chat"}
             </h1>
-            <div className="text-[11px] text-hh-gray mt-0.5">
+            <div className="text-[11px] text-hh-gray mt-0.5 truncate">
               {meta.label} mode
               {!isEmpty && ` · ${messages.length} messages`}
             </div>
           </div>
-          <ModePicker value={mode} onChange={onChangeMode} />
-          <div className="relative flex items-center gap-2">
+          <div className="shrink-0">
+            <ModePicker value={mode} onChange={onChangeMode} />
+          </div>
+          <div className="relative flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={onShare}
@@ -622,13 +624,13 @@ function EmptyState({
   const meta = CHAT_MODES[mode];
   const firstName = userFullName.split(" ")[0] ?? "there";
   return (
-    <div className="flex-1 overflow-y-auto py-16">
-      <div className="max-w-[640px] mx-auto px-7 text-center space-y-5 animate-fade-in">
+    <div className="flex-1 overflow-y-auto py-10 sm:py-16">
+      <div className="max-w-[640px] mx-auto px-4 sm:px-7 text-center space-y-5 animate-fade-in">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-hh-orange-light text-hh-orange-dark text-xs font-semibold uppercase tracking-wider">
           <span className={`h-1.5 w-1.5 rounded-full ${meta.dotClass}`} />
           {meta.label} mode
         </div>
-        <h2 className="font-display text-3xl md:text-4xl font-extrabold tracking-tight text-hh-black text-balance">
+        <h2 className="font-display text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-hh-black text-balance">
           Hey {firstName} — what are we eating?
         </h2>
         <p className="text-hh-charcoal max-w-md mx-auto">

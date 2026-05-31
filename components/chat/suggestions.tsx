@@ -12,7 +12,7 @@ export function ChatSuggestions({
 }) {
   const meta = CHAT_MODES[mode];
   return (
-    <div className="px-7">
+    <div className="px-4 sm:px-7">
       <div className="max-w-[780px] mx-auto flex flex-wrap gap-2">
         {meta.suggestions.map((s) => (
           <button

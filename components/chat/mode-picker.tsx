@@ -26,15 +26,23 @@ export function ModePicker({
             aria-selected={active}
             type="button"
             onClick={() => onChange(m.id)}
+            title={m.label}
             className={cn(
-              "inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all",
+              "inline-flex items-center gap-1.5 rounded-full text-xs font-semibold transition-all",
+              // Compact (dot-only) on mobile, full pill with label on sm+.
+              "px-2 py-1.5 sm:px-3.5",
               active
                 ? "bg-white text-hh-black shadow-[0_1px_3px_rgba(0,0,0,0.08)]"
                 : "text-hh-charcoal hover:text-hh-black",
             )}
           >
-            <span className={cn("h-1.5 w-1.5 rounded-full", m.dotClass)} />
-            {m.label}
+            <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", m.dotClass)} />
+            {/* Active mode always shows its label; inactive labels appear on
+                sm+ so the picker stays compact on mobile without becoming three
+                indistinguishable dots. */}
+            <span className={cn(active ? "inline" : "hidden sm:inline")}>
+              {m.label}
+            </span>
           </button>
         );
       })}
