@@ -47,6 +47,14 @@
       "price": 60,
       "is_veg": true,
       "allergen_tags": ["dairy"]
+    },
+    {
+      "id": "p_hyderabadi_korma",
+      "name": "Hyderabadi Veg Korma",
+      "description": "Rich mughlai gravy finished with a roasted peanut and cashew paste.",
+      "price": 220,
+      "is_veg": true,
+      "allergen_tags": ["dairy"]
     }
   ],
   "rest_truffles_koramangala": [

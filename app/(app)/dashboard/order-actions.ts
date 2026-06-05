@@ -13,7 +13,13 @@ import type {
 
 const menusById = menus as Record<
   string,
-  { id: string; name: string; allergen_tags: string[]; is_veg: boolean }[]
+  {
+    id: string;
+    name: string;
+    description?: string;
+    allergen_tags: string[];
+    is_veg: boolean;
+  }[]
 >;
 
 export type PlaceOrderResult =
@@ -83,6 +89,10 @@ export async function placeOrderFromMessage(
     return {
       name: it.name,
       allergen_tags: fixtureMatch?.allergen_tags ?? [],
+      // Feed the item's description into the deterministic keyword scan so an
+      // allergen mentioned in the prose but missing from the tags is still
+      // caught at checkout (dual-layer validation).
+      ingredients_text: fixtureMatch?.description,
       is_veg: fixtureMatch?.is_veg,
       safe: it.safe,
     };

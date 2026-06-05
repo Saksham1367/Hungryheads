@@ -16,6 +16,7 @@ import {
   writeCart,
   type MockCart,
 } from "@/lib/swiggy/cart-store";
+import { scanTextForAllergens } from "@/lib/safeplate/keywords";
 import { SWIGGY_LIMITS } from "@/lib/constants";
 
 export interface MockRestaurant {
@@ -136,8 +137,16 @@ export function getRestaurantMenu(args: GetMenuArgs): MenuResult | null {
       continue;
     }
     if (exclude.length) {
+      // Layer 1: structured tag match.
       const tags = item.allergen_tags.map((t) => t.toLowerCase());
-      const hit = exclude.find((a) => tags.includes(a));
+      let hit = exclude.find((a) => tags.includes(a));
+      // Layer 2: deterministic keyword scan over name + description, so an
+      // allergen present in the prose but missing from the tags is still
+      // filtered out before the agent ever sees the item.
+      if (!hit) {
+        const scanText = `${item.name}. ${item.description}`;
+        hit = scanTextForAllergens(scanText, exclude)[0];
+      }
       if (hit) {
         filtered_out.push({ item, reason: `contains ${hit}` });
         continue;

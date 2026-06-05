@@ -11,6 +11,7 @@
  * Server-only — pulls profile from Supabase via the user-scoped client.
  */
 import { createClient } from "@/lib/supabase/server";
+import { scanTextForAllergens } from "@/lib/safeplate/keywords";
 import type { Allergen, Diet } from "@/types/domain";
 
 export interface AllergenProfile {
@@ -66,6 +67,12 @@ export interface SafeplateItem {
   name: string;
   /** Allergen tags on the item (case-insensitive). */
   allergen_tags?: string[];
+  /**
+   * Free-form item text (description / ingredient list). Scanned by the
+   * deterministic keyword layer so an allergen that's present in the prose but
+   * MISSING from `allergen_tags` is still caught before checkout.
+   */
+  ingredients_text?: string;
   /** Item is vegetarian. */
   is_veg?: boolean;
   /** Optional pre-computed safe flag from the agent / engine — we re-verify. */
@@ -84,14 +91,30 @@ export function checkItem(
   item: SafeplateItem,
   profile: AllergenProfile,
 ): SafetyVerdict {
-  // 1. Allergen check — high+medium severity allergens block hard.
-  const blockedAllergens = (item.allergen_tags ?? [])
+  // Allergens that block hard = everything on the profile except 'low' severity
+  // (which is a note, not a block).
+  const blockingAllergens = profile.allergens.filter(
+    (a) => (profile.severityByAllergen[a] ?? "high") !== "low",
+  );
+
+  // ── Layer 1: structured tag match ──────────────────────────────────────
+  const tagHits = (item.allergen_tags ?? [])
     .map((t) => t.toLowerCase())
-    .filter((tag) => {
-      if (!profile.allergens.includes(tag)) return false;
-      const sev = profile.severityByAllergen[tag] ?? "high";
-      return sev !== "low"; // "low" = note only, doesn't block
-    });
+    .filter((tag) => blockingAllergens.includes(tag));
+
+  // ── Layer 2: deterministic keyword scan over free-form text ────────────
+  // Catches allergens present in the name/description but MISSING from the
+  // tags. Scans against the same blocking set. This is the safety net for
+  // when tags are incomplete or the agent overlooked a word.
+  const scanText = [item.name, item.ingredients_text]
+    .filter(Boolean)
+    .join(". ");
+  const keywordHits = scanTextForAllergens(scanText, blockingAllergens);
+
+  // Union of both layers — order is rejected if EITHER catches an allergen.
+  const blockedAllergens = Array.from(
+    new Set([...tagHits, ...keywordHits]),
+  );
   if (blockedAllergens.length > 0) {
     return {
       safe: false,
@@ -100,7 +123,7 @@ export function checkItem(
     };
   }
 
-  // 2. Diet check — strict-veg users can't order non-veg items.
+  // Diet check — strict-veg users can't order non-veg items.
   if (profile.isVeg && item.is_veg === false) {
     return {
       safe: false,
