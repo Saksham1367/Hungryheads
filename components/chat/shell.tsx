@@ -41,6 +41,7 @@ export interface ChatShellProps {
   initialHasMore: boolean;
   budgetUsedPct: number | null;
   overview: OverviewData | null;
+  swiggyConnected: boolean;
 }
 
 /**
@@ -569,6 +570,8 @@ export function ChatShell(props: ChatShellProps) {
             streaming={streaming}
             onRegenerate={onRegenerate}
             onEditMessage={onEditMessage}
+            swiggyConnected={props.swiggyConnected}
+            chatId={activeChat?.id ?? null}
           />
         )}
 

@@ -11,6 +11,7 @@ import { persistSwiggyToken } from "@/lib/swiggy/tokens";
 import {
   PKCE_COOKIES,
   SWIGGY_TOKEN_URL,
+  sanitizeReturnTo,
   type SwiggyTokenResponse,
 } from "@/lib/swiggy/oauth";
 
@@ -83,13 +84,23 @@ export async function GET(request: NextRequest) {
 
   await persistSwiggyToken(user.id, token);
 
-  // Clear the PKCE cookies + bounce home.
-  const dest = request.nextUrl.clone();
-  dest.pathname = "/connect-swiggy";
-  dest.search = "?connected=1";
+  // If the user started from a chat's "Connect Swiggy" CTA, return them to that
+  // exact chat; otherwise show the connect screen's success state.
+  const returnTo = sanitizeReturnTo(
+    request.cookies.get(PKCE_COOKIES.returnTo)?.value,
+  );
+  const dest = returnTo
+    ? new URL(returnTo, request.nextUrl.origin)
+    : (() => {
+        const u = request.nextUrl.clone();
+        u.pathname = "/connect-swiggy";
+        u.search = "?connected=1";
+        return u;
+      })();
   const response = NextResponse.redirect(dest);
   response.cookies.delete(PKCE_COOKIES.verifier);
   response.cookies.delete(PKCE_COOKIES.state);
+  response.cookies.delete(PKCE_COOKIES.returnTo);
   return response;
 }
 

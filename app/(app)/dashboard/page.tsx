@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ChatShell } from "@/components/chat/shell";
 import { loadDashboard } from "@/lib/chat/queries";
+import { isSwiggyConnected } from "@/lib/swiggy/tokens";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -29,7 +30,10 @@ export default async function DashboardPage({
   const initial = fullName.charAt(0).toUpperCase();
 
   const forceNew = searchParams?.new === "1";
-  const dash = await loadDashboard(searchParams?.chat, forceNew);
+  const [dash, swiggyConnected] = await Promise.all([
+    loadDashboard(searchParams?.chat, forceNew),
+    isSwiggyConnected(user.id),
+  ]);
 
   // `key` on the client shell forces a remount when the active chat changes —
   // otherwise its useState would keep stale `activeChat` / `messages` values
@@ -55,6 +59,7 @@ export default async function DashboardPage({
       initialHasMore={dash.activeHasMore}
       budgetUsedPct={dash.budgetUsedPct}
       overview={dash.overview}
+      swiggyConnected={swiggyConnected}
     />
   );
 }

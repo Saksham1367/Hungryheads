@@ -20,6 +20,7 @@ import {
   generateCodeVerifier,
   generateState,
   isMcpMockMode,
+  sanitizeReturnTo,
 } from "@/lib/swiggy/oauth";
 
 export async function GET(request: NextRequest) {
@@ -27,10 +28,14 @@ export async function GET(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  // Optional: where to send the user once connected (e.g. back to the chat
+  // they were ordering from). Validated against an open-redirect allowlist.
+  const returnTo = sanitizeReturnTo(request.nextUrl.searchParams.get("returnTo"));
+
   if (!user) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/sign-in";
-    url.searchParams.set("redirect", "/connect-swiggy");
+    url.searchParams.set("redirect", returnTo ?? "/connect-swiggy");
     return NextResponse.redirect(url);
   }
 
@@ -41,8 +46,14 @@ export async function GET(request: NextRequest) {
       expires_in: 5 * 24 * 60 * 60, // 5 days, matches Swiggy v1
       scope: SWIGGY_SCOPES.join(" "),
     });
+    // If we came from a chat's "Connect Swiggy" CTA, go straight back there;
+    // otherwise show the connect screen's success state.
     const url = request.nextUrl.clone();
+    if (returnTo) {
+      return NextResponse.redirect(new URL(returnTo, request.nextUrl.origin));
+    }
     url.pathname = "/connect-swiggy";
+    url.search = "";
     url.searchParams.set("mock", "1");
     return NextResponse.redirect(url);
   }
@@ -84,5 +95,10 @@ export async function GET(request: NextRequest) {
   };
   response.cookies.set(PKCE_COOKIES.verifier, verifier, cookieOpts);
   response.cookies.set(PKCE_COOKIES.state, state, cookieOpts);
+  // Stash the return target so the callback can bounce the user back to the
+  // exact chat after Swiggy redirects home.
+  if (returnTo) {
+    response.cookies.set(PKCE_COOKIES.returnTo, returnTo, cookieOpts);
+  }
   return response;
 }

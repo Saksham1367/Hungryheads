@@ -71,9 +71,29 @@ export const SWIGGY_SCOPES = ["mcp:tools", "mcp:resources", "mcp:prompts"];
 export const PKCE_COOKIES = {
   verifier: "hh_swiggy_pkce_verifier",
   state: "hh_swiggy_pkce_state",
+  // Where to send the user after connecting (e.g. back to the chat they were
+  // on). Carried as an HttpOnly cookie across the live OAuth round-trip.
+  returnTo: "hh_swiggy_return_to",
 } as const;
 
 export const PKCE_COOKIE_TTL_S = 600; // 10 minutes
+
+/**
+ * Validate a post-connect `returnTo` target. Open-redirect guard: only allow
+ * same-origin paths under /dashboard (the one place we ever bounce users back
+ * to). Rejects absolute URLs, protocol-relative `//host`, and backslash tricks.
+ * Returns the safe path or null.
+ */
+export function sanitizeReturnTo(
+  value: string | null | undefined,
+): string | null {
+  if (!value) return null;
+  if (!value.startsWith("/")) return null; // must be a relative path
+  if (value.startsWith("//")) return null; // protocol-relative -> external
+  if (value.includes("\\")) return null; // backslash normalisation tricks
+  if (value !== "/dashboard" && !value.startsWith("/dashboard?")) return null;
+  return value;
+}
 
 export interface SwiggyTokenResponse {
   access_token: string;

@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   FileText,
   ImageIcon,
+  Link2,
   Loader2,
   Pencil,
   RotateCcw,
@@ -37,6 +38,8 @@ export function ChatThread({
   streaming = false,
   onRegenerate,
   onEditMessage,
+  swiggyConnected = false,
+  chatId = null,
 }: {
   messages: ChatMessageView[];
   hasMore?: boolean;
@@ -45,6 +48,8 @@ export function ChatThread({
   streaming?: boolean;
   onRegenerate?: () => void;
   onEditMessage?: (messageId: string, newText: string) => void;
+  swiggyConnected?: boolean;
+  chatId?: string | null;
 }) {
   // The last agent message is the only one that can be regenerated.
   const lastAgentId = (() => {
@@ -123,6 +128,8 @@ export function ChatThread({
             // The active streaming agent bubble shows a "Thinking…" indicator
             // whenever there's a processing gap with nothing else on screen.
             isStreamingTurn={streaming && m.id === lastAgentId}
+            swiggyConnected={swiggyConnected}
+            chatId={chatId}
           />
         ))}
         {/* Scroll sentinel — auto-scroll targets this so the newest content
@@ -259,6 +266,8 @@ function Turn({
   canEdit = false,
   onEditMessage,
   isStreamingTurn = false,
+  swiggyConnected = false,
+  chatId = null,
 }: {
   message: ChatMessageView;
   canRegenerate?: boolean;
@@ -266,6 +275,8 @@ function Turn({
   canEdit?: boolean;
   onEditMessage?: (messageId: string, newText: string) => void;
   isStreamingTurn?: boolean;
+  swiggyConnected?: boolean;
+  chatId?: string | null;
 }) {
   if (message.role === "user") {
     return (
@@ -340,6 +351,8 @@ function Turn({
           <OrderSummaryCard
             messageId={message.id}
             initialOrder={message.order}
+            swiggyConnected={swiggyConnected}
+            chatId={chatId}
           />
         )}
         {canRegenerate && !message.tool && (
@@ -679,9 +692,13 @@ function toolLabel(name: string): string {
 function OrderSummaryCard({
   messageId,
   initialOrder,
+  swiggyConnected,
+  chatId,
 }: {
   messageId: string;
   initialOrder: OrderSummaryPayload;
+  swiggyConnected: boolean;
+  chatId: string | null;
 }) {
   const [order, setOrder] = useState<OrderSummaryPayload>(initialOrder);
   const [error, setError] = useState<string | null>(null);
@@ -828,41 +845,50 @@ function OrderSummaryCard({
               {error}
             </div>
           )}
-          {/* Mobile: primary button full-width on top, Edit/Swap split below.
-              sm+: single inline row [primary | Edit | Swap]. */}
-          <div className="flex flex-col sm:grid sm:grid-cols-[1fr_auto_auto] gap-2 px-4 py-3 border-t border-hh-gray-light">
-            <button
-              type="button"
-              onClick={onPlace}
-              disabled={!canAct}
-              className="inline-flex items-center justify-center gap-2 bg-hh-orange hover:bg-hh-orange-dark text-white rounded-xl py-3 px-3 text-sm font-bold shadow-md shadow-hh-orange/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Check className="h-4 w-4" />
-              )}
-              {isPending ? "Placing…" : "YES — place order"}
-            </button>
-            <div className="grid grid-cols-2 gap-2 sm:contents">
-              <button
-                type="button"
-                disabled
-                title="Edit — Phase 2"
-                className="rounded-xl bg-white border border-hh-gray-light py-2.5 sm:py-0 px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
+          {!swiggyConnected ? (
+            // No linked Swiggy account → can't place a real order. Route the
+            // user through OAuth and bring them straight back to THIS chat
+            // (returnTo), where the card will then offer the place button.
+            // There are no Edit/Swap buttons by design: changing the order is
+            // conversational — the user just tells the agent what to change.
+            <div className="px-4 py-3 border-t border-hh-gray-light space-y-2">
+              <a
+                href={`/api/swiggy-oauth/start?returnTo=${encodeURIComponent(
+                  chatId ? `/dashboard?chat=${chatId}` : "/dashboard",
+                )}`}
+                className="inline-flex w-full items-center justify-center gap-2 bg-hh-orange hover:bg-hh-orange-dark text-white rounded-xl py-3 px-3 text-sm font-bold shadow-md shadow-hh-orange/40 transition-colors"
               >
-                Edit
-              </button>
-              <button
-                type="button"
-                disabled
-                title="Swap — Phase 2"
-                className="rounded-xl bg-white border border-hh-gray-light py-2.5 sm:py-0 px-4 text-[13px] font-semibold text-hh-charcoal/40 cursor-not-allowed"
-              >
-                Swap
-              </button>
+                <Link2 className="h-4 w-4" />
+                Connect Swiggy to place this order
+              </a>
+              <p className="text-[11px] text-hh-gray text-center">
+                We&apos;ll bring you right back here once you&apos;re linked.
+              </p>
             </div>
-          </div>
+          ) : (
+            <div className="px-4 py-3 border-t border-hh-gray-light space-y-2">
+              <button
+                type="button"
+                onClick={onPlace}
+                disabled={!canAct}
+                className="inline-flex w-full items-center justify-center gap-2 bg-hh-orange hover:bg-hh-orange-dark text-white rounded-xl py-3 px-3 text-sm font-bold shadow-md shadow-hh-orange/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+                {isPending ? "Placing…" : "YES — place order"}
+              </button>
+              {/* No Edit/Swap buttons — editing is conversational. Nudge it. */}
+              {canAct && (
+                <p className="text-[11px] text-hh-gray text-center">
+                  Want changes? Just tell me — e.g. &ldquo;make it 2 biryanis&rdquo;
+                  or &ldquo;swap the raita for a coke&rdquo;.
+                </p>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

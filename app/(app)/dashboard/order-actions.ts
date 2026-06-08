@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { SWIGGY_LIMITS } from "@/lib/constants";
+import { isSwiggyConnected } from "@/lib/swiggy/tokens";
 import { checkOrder, loadAllergenProfile } from "@/lib/safeplate/filter";
 import menus from "@/fixtures/mcp/menus.json";
 import type { Json } from "@/types/database";
@@ -42,6 +43,16 @@ export async function placeOrderFromMessage(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
+
+  // A real order needs a linked Swiggy account. This is the server-side gate
+  // behind the UI's "Connect Swiggy" CTA — even if the button is bypassed, no
+  // order is placed without a valid token.
+  if (!(await isSwiggyConnected(user.id))) {
+    return {
+      ok: false,
+      error: "Connect your Swiggy account before placing an order.",
+    };
+  }
 
   // Pull the message + verify ownership via RLS-gated chat join.
   const { data: msg, error: msgErr } = await supabase
