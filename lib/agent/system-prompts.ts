@@ -20,7 +20,26 @@ export interface BuildPromptInput {
   mode: ChatMode;
 }
 
-export function buildChatSystemPrompt(input: BuildPromptInput): string {
+/**
+ * The system prompt is returned in two pieces so the caller can apply an
+ * Anthropic prompt-cache breakpoint to the static half:
+ *
+ *   - `staticPrefix` — identity, tone, memory/safety rules, hard constraints,
+ *     the tool guide and order-card rules. Byte-identical for every user and
+ *     every turn, so it caches cleanly (90% cheaper reads, shared across users).
+ *   - `dynamic` — this user's name, live SafePlate allergies, profile, mode and
+ *     long-term memory. Changes per user / per turn, so it is NOT cached.
+ *
+ * Everything dynamic lives in `dynamic` and comes AFTER the static block, which
+ * is what makes the prefix cacheable (a single varying byte up front would
+ * defeat the cache). The model reads instructions first, then live context.
+ */
+export interface ChatSystemPrompt {
+  staticPrefix: string;
+  dynamic: string;
+}
+
+export function buildChatSystemPrompt(input: BuildPromptInput): ChatSystemPrompt {
   const { profile, memories, mode } = input;
 
   const allergyList =
@@ -45,8 +64,8 @@ export function buildChatSystemPrompt(input: BuildPromptInput): string {
     ? "Connected — Swiggy tools below are LIVE."
     : "NOT connected — call the tools anyway (mock mode is fine for browsing), but tell the user to click 'Connect Swiggy' in their sidebar before they actually try to place an order.";
 
-  return [
-    `You are the HungryHeads agent — a warm, slightly cheeky AI food companion built on Swiggy. You are talking to ${profile.firstName}.`,
+  const staticPrefix = [
+    "You are the HungryHeads agent — a warm, slightly cheeky AI food companion built on Swiggy. (The specific user you're talking to is named in the USER CONTEXT at the end of this prompt.)",
     "",
     "TONE",
     "- Direct, warm, mildly playful. Hindi-English mixing in micro-copy is fine (e.g., \"bhookh lagi?\").",
@@ -62,8 +81,8 @@ export function buildChatSystemPrompt(input: BuildPromptInput): string {
     "- This is how you get smarter and safer for the user over time — treat it as a core job, not an afterthought.",
     "",
     "HARD CONSTRAINTS — never violate:",
-    `- Allergies to flag and refuse: ${allergyList}.`,
-    `- Diet preference: ${profile.diet ?? "no preference"}.`,
+    "- Allergies: ALWAYS flag and refuse anything containing an allergen listed in the user's ACTIVE SAFETY & DIET PROFILE (in USER CONTEXT below). When unsure whether a dish contains a listed allergen, treat it as UNSAFE.",
+    "- Diet: honour the user's diet preference shown in their profile below.",
     `- Cap any single order at ₹${SWIGGY_LIMITS.CART_CAP_RUPEES} (Builders Club v1 limit).`,
     "- COD only. Do not suggest online-payment-only coupons.",
     "- NEVER place an order without explicit user confirmation showing items + total.",
@@ -96,6 +115,18 @@ export function buildChatSystemPrompt(input: BuildPromptInput): string {
     "- Set each item's `safe` to true only if it's allergen-safe for this user. If you can't be sure, pick a different dish — don't propose flagged items.",
     `- If the order would exceed ₹${SWIGGY_LIMITS.CART_CAP_RUPEES}, the tool rejects it with an error — when that happens, propose a smaller/cheaper order instead.`,
     "- Call propose_order AT MOST ONCE per reply. After calling it, write a short 1–2 sentence pitch for the choice — don't restate the line items in prose.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  // ── Dynamic tail (per user / per turn — NOT cached) ──────────────────────
+  const dynamic = [
+    "USER CONTEXT — this is who you're talking to right now.",
+    `You are talking to ${profile.firstName}.`,
+    "",
+    "ACTIVE SAFETY & DIET PROFILE — applies to THIS user (the source of truth for the allergy/diet HARD CONSTRAINTS above):",
+    `- Allergies to flag and refuse: ${allergyList}.`,
+    `- Diet preference: ${profile.diet ?? "no preference"}.`,
     "",
     `MODE: ${mode.toUpperCase()}`,
     modeAddendum(mode),
@@ -117,6 +148,8 @@ export function buildChatSystemPrompt(input: BuildPromptInput): string {
   ]
     .filter(Boolean)
     .join("\n");
+
+  return { staticPrefix, dynamic };
 }
 
 function modeAddendum(mode: ChatMode): string {

@@ -30,7 +30,7 @@ import { buildChatSystemPrompt } from "@/lib/agent/system-prompts";
 import { buildOrderFromToolInput, extractOrderCard } from "@/lib/agent/order-card";
 import { extractLearnedFacts } from "@/lib/agent/learned";
 import { AGENT_TOOLS, runTool } from "@/lib/agent/tools";
-import { checkRateLimit } from "@/lib/ratelimit";
+import { checkRateLimitDistributed } from "@/lib/ratelimit";
 import {
   ACCEPTED_MIME_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -143,8 +143,8 @@ export async function POST(request: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return errorResponse("auth", 401);
 
-  // ─── Rate limit (per authenticated user) ────────────────────────────────
-  const rl = checkRateLimit(
+  // ─── Rate limit (per authenticated user, shared across all instances) ────
+  const rl = await checkRateLimitDistributed(
     `chat:${user.id}`,
     RATE_LIMIT_MAX,
     RATE_LIMIT_WINDOW_MS,
@@ -378,7 +378,11 @@ export async function POST(request: NextRequest) {
   const profile = await loadAgentUserProfile(user.id);
   if (!profile) return errorResponse("profile_missing", 500);
   const memories = await loadTopMemories(user.id, 24);
-  const systemPrompt = buildChatSystemPrompt({ profile, memories, mode });
+  // Split prompt: `staticPrefix` is identical for every user/turn and gets an
+  // ephemeral cache breakpoint below; `dynamic` (name, allergies, profile,
+  // memory, mode) is sent fresh each time. See lib/agent/system-prompts.ts.
+  const { staticPrefix: systemStatic, dynamic: systemDynamic } =
+    buildChatSystemPrompt({ profile, memories, mode });
 
   const { data: history } = await supabase
     .from("chat_messages")
@@ -460,13 +464,30 @@ export async function POST(request: NextRequest) {
       // path). The server builds + validates it; preferred over the legacy
       // <order-summary> string at persistence time.
       let proposedOrder: OrderSummaryPayload | null = null;
+      // Anthropic token-usage tallies across all tool-loop iterations of this
+      // one user message. cacheRead/cacheWrite let us confirm prompt caching is
+      // actually landing (see the llm_usage log after the loop).
+      let usageInput = 0;
+      let usageOutput = 0;
+      let usageCacheRead = 0;
+      let usageCacheWrite = 0;
       try {
         const anthropic = anthropicClient();
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           const claude = anthropic.messages.stream({
             model: DEFAULT_MODEL,
             max_tokens: DEFAULT_MAX_TOKENS,
-            system: systemPrompt,
+            // Two-block system: the static prefix carries an ephemeral cache
+            // breakpoint (cached with the tool block — 90% cheaper on reads,
+            // shared across users); the dynamic tail is sent fresh each call.
+            system: [
+              {
+                type: "text",
+                text: systemStatic,
+                cache_control: { type: "ephemeral" },
+              },
+              { type: "text", text: systemDynamic },
+            ],
             messages: turnMessages,
             tools: AGENT_TOOLS,
           });
@@ -483,6 +504,13 @@ export async function POST(request: NextRequest) {
           }
 
           const finalMsg = await claude.finalMessage();
+          // Tally usage for this iteration (cache_* fields are present when
+          // prompt caching is active).
+          const u = finalMsg.usage;
+          usageInput += u.input_tokens ?? 0;
+          usageOutput += u.output_tokens ?? 0;
+          usageCacheRead += u.cache_read_input_tokens ?? 0;
+          usageCacheWrite += u.cache_creation_input_tokens ?? 0;
           if (finalMsg.stop_reason !== "tool_use") {
             // Conversation done — agent gave a final reply (text only).
             break;
@@ -674,6 +702,27 @@ export async function POST(request: NextRequest) {
 
           // Loop continues — next iteration streams the agent's follow-up.
         }
+
+        // One JSON line per user message summarising token usage across the
+        // whole tool loop. `cache_read` > 0 confirms prompt caching is landing;
+        // `hit_rate` is cached input ÷ total input (excludes output).
+        const totalInput = usageInput + usageCacheRead + usageCacheWrite;
+        console.info(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            level: "info",
+            event: "llm_usage",
+            model: DEFAULT_MODEL,
+            input_tokens: usageInput,
+            output_tokens: usageOutput,
+            cache_read: usageCacheRead,
+            cache_write: usageCacheWrite,
+            cache_hit_rate:
+              totalInput > 0
+                ? Math.round((usageCacheRead / totalInput) * 100) / 100
+                : 0,
+          }),
+        );
       } catch (err) {
         console.error("[chat] stream failed:", err);
         const code = categorizeSdkError(err);

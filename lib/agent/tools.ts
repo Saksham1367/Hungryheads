@@ -315,6 +315,16 @@ export const AGENT_TOOLS: Anthropic.Messages.Tool[] = [
   },
 ];
 
+// Prompt caching: the tool block is 100% static yet re-sent on every API call —
+// and re-sent up to MAX_TOOL_TURNS times for a single user message inside the
+// tool loop. Marking the FINAL tool with an ephemeral cache breakpoint tells
+// Anthropic to cache the whole block (writes cost 1.25×, reads 0.1× — a 90%
+// discount, 5-min TTL refreshed on each hit). Applied to the last element
+// programmatically so it stays correct if tools are reordered.
+if (AGENT_TOOLS.length > 0) {
+  AGENT_TOOLS[AGENT_TOOLS.length - 1].cache_control = { type: "ephemeral" };
+}
+
 // ─── Dispatcher (server-side) ───────────────────────────────────────────────
 
 export interface ToolDispatchResult {
