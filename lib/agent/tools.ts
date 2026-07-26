@@ -332,15 +332,28 @@ export interface ToolDispatchResult {
 export interface ToolDispatchContext {
   /** Authenticated Supabase user id; required for cart-scoped tools. */
   userId: string;
+  /**
+   * Live Swiggy dispatcher. Set only when MCP_MODE=live — tools then go to the
+   * real Swiggy Food MCP server instead of the fixture mock. Null/undefined in
+   * mock mode. Typed loosely to avoid a runtime import cycle with live.ts.
+   */
+  live?: LiveDispatcher | null;
 }
 
-export function runTool(
+/** Structural type for lib/swiggy/live.ts's LiveSwiggyDispatcher. */
+export interface LiveDispatcher {
+  dispatch(name: string, input: unknown): Promise<ToolDispatchResult>;
+}
+
+export async function runTool(
   name: string,
   input: unknown,
   ctx: ToolDispatchContext,
-): ToolDispatchResult {
+): Promise<ToolDispatchResult> {
   const started = Date.now();
-  const result = dispatch(name, input, ctx);
+  const result = ctx.live
+    ? await ctx.live.dispatch(name, input)
+    : dispatchMock(name, input, ctx);
   logToolCall({
     tool: name,
     ok: result.ok,
@@ -350,7 +363,7 @@ export function runTool(
   return result;
 }
 
-function dispatch(
+function dispatchMock(
   name: string,
   input: unknown,
   ctx: ToolDispatchContext,

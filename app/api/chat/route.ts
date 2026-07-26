@@ -31,6 +31,9 @@ import { buildOrderFromToolInput, extractOrderCard } from "@/lib/agent/order-car
 import { extractLearnedFacts } from "@/lib/agent/learned";
 import { AGENT_TOOLS, runTool } from "@/lib/agent/tools";
 import { checkRateLimitDistributed } from "@/lib/ratelimit";
+import { isMcpMockMode } from "@/lib/swiggy/oauth";
+import { openSwiggyMcpSession } from "@/lib/swiggy/mcp-client";
+import { LiveSwiggyDispatcher } from "@/lib/swiggy/live";
 import {
   ACCEPTED_MIME_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -471,8 +474,18 @@ export async function POST(request: NextRequest) {
       let usageOutput = 0;
       let usageCacheRead = 0;
       let usageCacheWrite = 0;
+      let liveDispatcher: LiveSwiggyDispatcher | null = null;
       try {
         const anthropic = anthropicClient();
+        // MCP_MODE=live → route tool calls to the real Swiggy Food MCP server
+        // for this request (one session, reused across the tool loop, closed in
+        // `finally`). Mock mode leaves this null and tools hit the fixture
+        // dispatcher. Phase E: turn a reauth failure here into a reconnect CTA.
+        if (!isMcpMockMode()) {
+          liveDispatcher = new LiveSwiggyDispatcher(
+            await openSwiggyMcpSession(user.id),
+          );
+        }
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           const claude = anthropic.messages.stream({
             model: DEFAULT_MODEL,
@@ -666,7 +679,10 @@ export async function POST(request: NextRequest) {
             // run the tool, then ensure the pill was visible for a minimum
             // duration before clearing it. Each tool gets its own visible pill.
             const startedAt = Date.now();
-            const result = runTool(tu.name, tu.input, { userId: user.id });
+            const result = await runTool(tu.name, tu.input, {
+              userId: user.id,
+              live: liveDispatcher,
+            });
             toolCallRecord.push({ name: tu.name, ok: result.ok });
             const elapsed = Date.now() - startedAt;
             if (elapsed < MIN_TOOL_PILL_MS) {
@@ -770,6 +786,9 @@ export async function POST(request: NextRequest) {
         });
         controller.close();
         return;
+      } finally {
+        // Always release the live MCP session (no-op in mock mode).
+        await liveDispatcher?.close();
       }
 
       // Strip the trailing markers from the agent reply BEFORE saving.

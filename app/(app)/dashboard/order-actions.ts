@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { SWIGGY_LIMITS } from "@/lib/constants";
 import { isSwiggyConnected } from "@/lib/swiggy/tokens";
+import { isMcpMockMode } from "@/lib/swiggy/oauth";
+import { placeLiveFoodOrder } from "@/lib/swiggy/place-order-live";
 import { checkRateLimitDistributed } from "@/lib/ratelimit";
+import { categorizeSdkError, describeChatError } from "@/lib/chat/errors";
 import { checkOrder, loadAllergenProfile } from "@/lib/safeplate/filter";
 import menus from "@/fixtures/mcp/menus.json";
 import type { Json } from "@/types/database";
@@ -151,13 +154,28 @@ export async function placeOrderFromMessage(
   //
   // Wall-clock retry budget capped at SWIGGY_LIMITS.RETRY_BUDGET_MS (30s).
   // ────────────────────────────────────────────────────────────────────────
-  const mockOrderId = `mock_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 8)}`;
+  // Resolve the order id. In live mode we place against the real Swiggy MCP
+  // here — behind this human-confirmed action, never the agent — with the
+  // spec's check-then-retry (see place-order-live.ts). In mock mode we mint a
+  // synthetic id. Either way, placement happens BEFORE we persist below.
+  let orderId: string;
+  if (isMcpMockMode()) {
+    orderId = `mock_${Date.now().toString(36)}_${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+  } else {
+    try {
+      const placed = await placeLiveFoodOrder(user.id, order);
+      orderId = placed.orderId;
+    } catch (err) {
+      // Sugar-coated, code-mapped message (reauth → "reconnect Swiggy", etc.).
+      return { ok: false, error: describeChatError(categorizeSdkError(err)).detail };
+    }
+  }
   const updatedOrder: OrderSummaryPayload = {
     ...order,
     status: "placed",
-    swiggy_order_id: mockOrderId,
+    swiggy_order_id: orderId,
   };
   const updatedPayload: ChatMessagePayload = {
     type: "order_summary",
@@ -209,7 +227,7 @@ export async function placeOrderFromMessage(
   // We won the claim — record the order for SpendSmart + the Overview drawer.
   const { error: cacheErr } = await supabase.from("orders_cache").insert({
     user_id: user.id,
-    swiggy_order_id: mockOrderId,
+    swiggy_order_id: orderId,
     source: "food",
     total_amount: order.total,
     items: order.items as unknown as Json,
@@ -230,7 +248,7 @@ export async function placeOrderFromMessage(
   }
 
   revalidatePath("/dashboard");
-  return { ok: true, order: updatedOrder, orderId: mockOrderId };
+  return { ok: true, order: updatedOrder, orderId };
 }
 
 /** Cancel a draft order — flips status to 'cancelled'. */

@@ -24,6 +24,7 @@ export type ChatErrorCode =
   | "attachment_parse"
   | "history_corrupted"
   | "profile_missing"
+  | "swiggy_reauth"
   | "internal"
   | "unknown";
 
@@ -100,6 +101,12 @@ const CATALOG: Record<ChatErrorCode, Omit<ChatErrorInfo, "code">> = {
       "Finish onboarding from your profile page so we know your preferences.",
     retryable: false,
   },
+  swiggy_reauth: {
+    title: "Reconnect your Swiggy account",
+    detail:
+      "Your Swiggy connection needs a refresh. Reconnect it from the sidebar to keep browsing and ordering — it only takes a second.",
+    retryable: false,
+  },
   internal: {
     title: "Something went wrong",
     detail:
@@ -133,6 +140,16 @@ export function categorizeSdkError(err: unknown): ChatErrorCode {
   const message =
     err instanceof Error ? err.message : typeof err === "string" ? err : "";
   const lower = message.toLowerCase();
+
+  // Live Swiggy MCP failures (SwiggyMcpError). Detected structurally by name so
+  // this shared client+server module never imports the server-only MCP client.
+  if (err instanceof Error && err.name === "SwiggyMcpError") {
+    const c = (err as { code?: unknown }).code;
+    if (c === "reauth") return "swiggy_reauth";
+    if (c === "rate_limited") return "rate_limited";
+    if (c === "upstream") return "overloaded";
+    return "internal";
+  }
 
   // The most common one right now: Anthropic 400 with credit-balance body.
   if (
