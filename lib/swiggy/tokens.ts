@@ -1,15 +1,18 @@
 /**
  * Swiggy token persistence (brief §7.3).
  *
- * Phase 1: stored in `swiggy_tokens` row, RLS-gated to the owning user
- * (read) and service-role only (write). Plain text — replace with Supabase
- * Vault in Phase 2 before public launch.
+ * Stored in `swiggy_tokens`, RLS-gated to the owning user (read) and
+ * service-role only (write). The `access_token` is encrypted at rest with
+ * AES-256-GCM (see lib/swiggy/crypto.ts) — a live token can place real orders,
+ * so RLS alone isn't enough; the encryption key lives only in the env, so a
+ * database dump without the app env is useless.
  *
  * All functions in this module are server-only — they call createAdminClient
  * which throws at runtime if invoked from the browser.
  */
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SWIGGY_SCOPES } from "@/lib/swiggy/oauth";
+import { encryptSecret, decryptSecret } from "@/lib/swiggy/crypto";
 
 export interface StoredSwiggyToken {
   access_token: string;
@@ -32,7 +35,8 @@ export async function persistSwiggyToken(
   const { error } = await admin.from("swiggy_tokens").upsert(
     {
       user_id: userId,
-      access_token: token.access_token,
+      // Encrypted at rest — never store the raw token.
+      access_token: encryptSecret(token.access_token),
       expires_at: expiresAt.toISOString(),
       scopes,
     },
@@ -61,7 +65,9 @@ export async function getSwiggyToken(
   const expiresAt = new Date(data.expires_at);
   if (expiresAt <= new Date()) return null; // expired
   return {
-    access_token: data.access_token,
+    // Decrypt at read time. Legacy plaintext rows (pre-encryption) pass through
+    // untouched and get re-encrypted next time the token is persisted.
+    access_token: decryptSecret(data.access_token),
     expires_at: expiresAt,
     scopes: data.scopes,
   };

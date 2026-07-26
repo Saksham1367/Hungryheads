@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { SWIGGY_LIMITS } from "@/lib/constants";
 import { isSwiggyConnected } from "@/lib/swiggy/tokens";
+import { checkRateLimitDistributed } from "@/lib/ratelimit";
 import { checkOrder, loadAllergenProfile } from "@/lib/safeplate/filter";
 import menus from "@/fixtures/mcp/menus.json";
 import type { Json } from "@/types/database";
@@ -51,6 +52,16 @@ export async function placeOrderFromMessage(
     return {
       ok: false,
       error: "Connect your Swiggy account before placing an order.",
+    };
+  }
+
+  // Rate-limit order placement per user — a placed order is a real,
+  // money-spending, non-idempotent action, so cap automated/abusive retries.
+  const rl = await checkRateLimitDistributed(`order:${user.id}`, 15, 60_000);
+  if (!rl.ok) {
+    return {
+      ok: false,
+      error: `Too many order attempts — try again in ${rl.retryAfterSeconds}s.`,
     };
   }
 
@@ -143,8 +154,59 @@ export async function placeOrderFromMessage(
   const mockOrderId = `mock_${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+  const updatedOrder: OrderSummaryPayload = {
+    ...order,
+    status: "placed",
+    swiggy_order_id: mockOrderId,
+  };
+  const updatedPayload: ChatMessagePayload = {
+    type: "order_summary",
+    data: updatedOrder,
+  };
 
-  // Persist into orders_cache so SpendSmart + Overview drawer pick it up.
+  // Idempotency guard against a double-order (e.g. two concurrent clicks):
+  // atomically CLAIM the message by flipping it to "placed" ONLY if it isn't
+  // already. The DB serialises these, so exactly one caller wins the update;
+  // the loser gets 0 rows and returns the already-placed order instead of
+  // logging a second one. This claim happens BEFORE the orders_cache insert so
+  // we never write two order rows for one message.
+  const { data: claimRows, error: claimErr } = await supabase
+    .from("chat_messages")
+    .update({ payload: updatedPayload as unknown as Json })
+    .eq("id", messageId)
+    .neq("payload->>status", "placed")
+    .select("id");
+  if (claimErr) {
+    return { ok: false, error: `Status update failed: ${claimErr.message}` };
+  }
+  if (!claimRows || claimRows.length === 0) {
+    // Lost the claim (already placed) OR RLS blocked us. Re-read: if it's
+    // placed, return that order idempotently; otherwise surface the RLS hint.
+    const { data: fresh } = await supabase
+      .from("chat_messages")
+      .select("payload")
+      .eq("id", messageId)
+      .maybeSingle();
+    const freshPayload = fresh?.payload as ChatMessagePayload | null;
+    if (
+      freshPayload?.type === "order_summary" &&
+      freshPayload.data.status === "placed" &&
+      freshPayload.data.swiggy_order_id
+    ) {
+      return {
+        ok: true,
+        order: freshPayload.data,
+        orderId: freshPayload.data.swiggy_order_id,
+      };
+    }
+    return {
+      ok: false,
+      error:
+        "Status update affected 0 rows — RLS policy missing? Run migration 0003.",
+    };
+  }
+
+  // We won the claim — record the order for SpendSmart + the Overview drawer.
   const { error: cacheErr } = await supabase.from("orders_cache").insert({
     user_id: user.id,
     swiggy_order_id: mockOrderId,
@@ -155,35 +217,16 @@ export async function placeOrderFromMessage(
     ordered_at: new Date().toISOString(),
   });
   if (cacheErr) {
-    return { ok: false, error: `Order log failed: ${cacheErr.message}` };
-  }
-
-  // Update the chat message's payload to "placed".
-  const updatedOrder: OrderSummaryPayload = {
-    ...order,
-    status: "placed",
-    swiggy_order_id: mockOrderId,
-  };
-  const updatedPayload: ChatMessagePayload = {
-    type: "order_summary",
-    data: updatedOrder,
-  };
-  const { data: updRows, error: updErr } = await supabase
-    .from("chat_messages")
-    .update({ payload: updatedPayload as unknown as Json })
-    .eq("id", messageId)
-    .select("id");
-  if (updErr) {
-    return { ok: false, error: `Status update failed: ${updErr.message}` };
-  }
-  if (!updRows || updRows.length === 0) {
-    // Surfaced if RLS silently rejects the update — prevents the "looks placed
-    // until refresh" bug from sneaking back in.
-    return {
-      ok: false,
-      error:
-        "Status update affected 0 rows — RLS policy missing? Run migration 0003.",
+    // Roll the claim back to a draft so the user can retry cleanly.
+    const revertPayload: ChatMessagePayload = {
+      type: "order_summary",
+      data: order,
     };
+    await supabase
+      .from("chat_messages")
+      .update({ payload: revertPayload as unknown as Json })
+      .eq("id", messageId);
+    return { ok: false, error: `Order log failed: ${cacheErr.message}` };
   }
 
   revalidatePath("/dashboard");

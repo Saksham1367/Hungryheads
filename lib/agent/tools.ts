@@ -148,17 +148,13 @@ export const AGENT_TOOLS: Anthropic.Messages.Tool[] = [
       required: ["code"],
     },
   },
-  {
-    name: "place_food_order",
-    description:
-      "Place the order. COD only in v1. ₹1000 cap enforced. NOT idempotent: in production, on 5xx you MUST call get_food_orders to verify before retrying (docs §8). Always show the cart summary + total to the user and get explicit confirmation before invoking this.",
-    input_schema: {
-      type: "object",
-      properties: {
-        paymentMethod: { type: "string", enum: ["COD"] },
-      },
-    },
-  },
+  // NOTE: `place_food_order` is deliberately NOT an agent tool. Placing an
+  // order spends real money, so it must never be reachable by the model (a
+  // prompt-injected message/attachment could otherwise trigger it). The ONLY
+  // path to a placed order is: agent calls `propose_order` -> user clicks the
+  // "YES — place order" button -> the placeOrderFromMessage server action.
+  // At Step 12 that server action (not the LLM) calls the live MCP
+  // place_food_order behind the human confirmation, with check-then-retry.
   {
     name: "track_food_order",
     description:
