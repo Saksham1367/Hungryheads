@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { checkRateLimitDistributed } from "@/lib/ratelimit";
 import {
   generateHuddleCode,
   isValidHuddleCode,
@@ -111,6 +112,16 @@ export async function joinHuddleByCode(rawCode: string): Promise<JoinHuddleResul
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Not signed in." };
+
+  // Throttle guesses so the 6-letter invite code can't be brute-forced. Joins
+  // go through service-role below, so without this a client could hammer codes.
+  const rl = await checkRateLimitDistributed(`join:${user.id}`, 10, 60_000);
+  if (!rl.ok) {
+    return {
+      ok: false,
+      error: `Too many attempts — try again in ${rl.retryAfterSeconds}s.`,
+    };
+  }
 
   // Look up the huddle by code via service-role — RLS would only return rows
   // for users already in the huddle, but the join flow needs to find non-

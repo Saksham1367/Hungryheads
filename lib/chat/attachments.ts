@@ -15,6 +15,11 @@ export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5 MB
 /** Cap on extracted text injected into the prompt — keeps tokens bounded. */
 export const MAX_EXTRACTED_CHARS = 50_000;
 
+/** DoS guards for spreadsheet parsing — bound how much a compressed .xls(x)
+ *  can expand in memory before extraction (zip-bomb mitigation). */
+const MAX_SHEET_ROWS = 5_000;
+const MAX_SHEETS = 20;
+
 /** Image MIME types Claude vision accepts. */
 export const ACCEPTED_IMAGE_MIME_TYPES = new Set<string>([
   "image/jpeg",
@@ -147,10 +152,14 @@ export async function extractAttachmentText(
     raw = result.value ?? "";
   } else if (kind === "xls" || kind === "xlsx") {
     // SheetJS — read every sheet, emit CSV-per-sheet.
+    // DoS guard: a small (zip-compressed) .xlsx can expand to hundreds of MB of
+    // cells. `sheetRows` caps how many rows SheetJS parses per sheet, and we
+    // process at most MAX_SHEETS sheets — bounding memory/CPU before the
+    // MAX_EXTRACTED_CHARS output cap kicks in.
     const XLSX = await import("xlsx");
-    const wb = XLSX.read(buffer, { type: "buffer" });
+    const wb = XLSX.read(buffer, { type: "buffer", sheetRows: MAX_SHEET_ROWS });
     const parts: string[] = [];
-    for (const sheetName of wb.SheetNames) {
+    for (const sheetName of wb.SheetNames.slice(0, MAX_SHEETS)) {
       const sheet = wb.Sheets[sheetName];
       const csv = XLSX.utils.sheet_to_csv(sheet);
       if (csv.trim().length === 0) continue;

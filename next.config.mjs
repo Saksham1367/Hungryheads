@@ -1,3 +1,24 @@
+// Content-Security-Policy. This is a BACKSTOP (react-markdown is XSS-safe by
+// default and we never enable rehype-raw), not the primary defence. Next's App
+// Router injects inline hydration scripts and dev HMR needs eval, so without
+// per-request nonces we must allow 'unsafe-inline'/'unsafe-eval' on script-src
+// — a stricter nonce-based CSP is future work. The genuine wins here: lock down
+// base-uri, object-src, and form-action, and scope where the app may connect /
+// load images. Framing is governed by X-Frame-Options below (per-route), so we
+// intentionally omit frame-ancestors to avoid conflicting with /share.
+const CSP = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "form-action 'self'",
+  "frame-src 'self'",
+  "img-src 'self' data: blob: https://media-assets.swiggy.com https://mcp.swiggy.com",
+  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://mcp.swiggy.com",
+].join("; ");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Production-grade default headers. These move our Lighthouse "Best Practices"
@@ -8,6 +29,8 @@ const nextConfig = {
       {
         source: "/:path*",
         headers: [
+          // Backstop against XSS / content injection (see CSP note above).
+          { key: "Content-Security-Policy", value: CSP },
           // Browsers will only ever connect over HTTPS once they see this.
           // 2-year max-age matches Mozilla "modern" profile.
           {

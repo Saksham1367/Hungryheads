@@ -8,11 +8,15 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { safeInternalPath } from "@/lib/utils/url";
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  // Validate before use — `next` is attacker-influenced (via the sign-in
+  // ?redirect=). String-concatenating an unchecked value onto origin enables
+  // "origin@evil.com" / "origin.evil.com" host-swap open redirects.
+  const next = safeInternalPath(searchParams.get("next"));
 
   if (!code) {
     return NextResponse.redirect(

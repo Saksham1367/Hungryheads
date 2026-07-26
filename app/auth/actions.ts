@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { safeInternalPath } from "@/lib/utils/url";
 
 const credentialsSchema = z.object({
   email: z.string().email("Enter a valid email address."),
@@ -46,13 +47,12 @@ export async function signInWithEmail(
     return { ok: false, error: error.message };
   }
 
-  const redirectTo =
-    typeof formData.get("redirect") === "string"
-      ? (formData.get("redirect") as string)
-      : "/dashboard";
+  // Validate the redirect target — it comes from the URL, so an unchecked value
+  // (?redirect=https://evil.com) would be an open-redirect / phishing vector.
+  const redirectTo = safeInternalPath(formData.get("redirect"));
 
   revalidatePath("/", "layout");
-  redirect(redirectTo || "/dashboard");
+  redirect(redirectTo);
 }
 
 /** Server action — email + password sign-up. */
