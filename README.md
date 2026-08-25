@@ -67,10 +67,9 @@ back to you live. Everything is remembered for next time.
 
 ---
 
-## Why this is production quality, not a hackathon demo
+## Engineered for production
 
-This isn't a weekend prototype held together with tape. The parts you don't see
-are where most of the work went:
+The parts you don't see are where most of the work went:
 
 ### It doesn't trust the AI on safety
 Allergy checks run **two independent layers** — structured allergen tags *and* a
@@ -95,9 +94,9 @@ the same way every time.
 
 ---
 
-## The hard parts: what broke, and how I fixed it
+## Hard problems, and how I solved them
 
-The honest engineering story — the bugs that taught me the most:
+A few of the trickier engineering challenges behind the app:
 
 **The chat worked "sometimes."** Memory and order cards first relied on the model
 emitting magic text strings, which it did one time and forgot the next. I rebuilt
